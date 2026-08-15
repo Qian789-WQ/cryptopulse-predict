@@ -1197,10 +1197,86 @@ def api_predict():
         else:
             advice = f"信号不明确，趋势{trend}，ADX={adx_val:.0f}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
         
+        # 信号置信度计算
+        direction = "long" if score >= 55 else ("short" if score <= 45 else "neutral")
+        current_price_val = float(latest["close"])
+        rsi_val = float(latest["rsi"])
+        macd_hist = float(latest.get("macd_hist", 0))
+        ma20_val = float(latest.get("ma20", current_price_val))
+        adx_val_local = adx_val if isinstance(adx_val, (int, float)) else 20
+        vol_ratio_val = float(latest["vol_ratio"])
+        kdj_k = float(latest["kdj_k"])
+        kdj_d = float(latest["kdj_d"])
+        
+        confidence_factors = []
+        if direction == "long" and rsi_val < 70:
+            confidence_factors.append(("RSI", True))
+        elif direction == "short" and rsi_val > 30:
+            confidence_factors.append(("RSI", True))
+        else:
+            confidence_factors.append(("RSI", False))
+        
+        if direction == "long" and macd_hist > 0:
+            confidence_factors.append(("MACD", True))
+        elif direction == "short" and macd_hist < 0:
+            confidence_factors.append(("MACD", True))
+        else:
+            confidence_factors.append(("MACD", False))
+        
+        if direction == "long" and current_price_val > ma20_val:
+            confidence_factors.append(("均线", True))
+        elif direction == "short" and current_price_val < ma20_val:
+            confidence_factors.append(("均线", True))
+        else:
+            confidence_factors.append(("均线", False))
+        
+        if adx_val_local > 25:
+            confidence_factors.append(("ADX趋势", True))
+        else:
+            confidence_factors.append(("ADX趋势", False))
+        
+        if vol_ratio_val > 1.2:
+            confidence_factors.append(("成交量", True))
+        else:
+            confidence_factors.append(("成交量", False))
+        
+        if direction == "long" and kdj_k > kdj_d:
+            confidence_factors.append(("KDJ", True))
+        elif direction == "short" and kdj_k < kdj_d:
+            confidence_factors.append(("KDJ", True))
+        else:
+            confidence_factors.append(("KDJ", False))
+        
+        confirmed = sum(1 for _, c in confidence_factors if c)
+        confidence_pct = round(confirmed / len(confidence_factors) * 100)
+        
+        if confidence_pct >= 80:
+            confidence_level = "极高"
+            confidence_note = "所有指标高度一致，建议重仓"
+        elif confidence_pct >= 65:
+            confidence_level = "高"
+            confidence_note = "大部分指标一致，可正常仓位"
+        elif confidence_pct >= 50:
+            confidence_level = "中"
+            confidence_note = "指标有分歧，建议轻仓"
+        else:
+            confidence_level = "低"
+            confidence_note = "指标严重分歧，不建议交易"
+        
+        confidence_data = {
+            "score": confidence_pct,
+            "level": confidence_level,
+            "note": confidence_note,
+            "factors": confidence_factors,
+            "confirmed_count": confirmed,
+            "total_count": len(confidence_factors)
+        }
+        
         return jsonify({
             "symbol": symbol,
             "timeframe": timeframe,
             "current_price": float(latest["close"]),
+            "confidence": confidence_data,
             "pct_change": float(latest["pct_change"]),
             "vol_ratio": float(latest["vol_ratio"]),
             "rsi": float(latest["rsi"]),
