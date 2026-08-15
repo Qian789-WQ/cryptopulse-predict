@@ -630,6 +630,14 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
     # 仓位百分比
     position_pct = round(position_size / account_size * 100, 1)
     
+    # 每个止盈位的平仓比例
+    tp1_close_pct = 30  # TP1平30%
+    tp2_close_pct = 30  # TP2平30%
+    tp3_close_pct = 40  # TP3平40%
+    
+    # 限制最大仓位不超过200%（2倍杠杆）
+    position_pct = min(position_pct, 200)
+    
     return {
         "direction": direction,
         "direction_text": direction_text,
@@ -638,6 +646,9 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
         "tp1": round(tp1, 2),
         "tp2": round(tp2, 2),
         "tp3": round(tp3, 2),
+        "tp1_close_pct": tp1_close_pct,
+        "tp2_close_pct": tp2_close_pct,
+        "tp3_close_pct": tp3_close_pct,
         "position_size": position_size,
         "position_pct": position_pct,
         "risk_reward": risk_reward,
@@ -897,12 +908,22 @@ def api_predict():
             signal_class = "strong-bearish"
         
         ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
-        if score >= 60:
-            advice = f"可考虑做多，止损设在 ${sr['s1']:,.2f}，第一目标 ${sr['r1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
-        elif score <= 40:
-            advice = f"可考虑做空，止损设在 ${sr['r1']:,.2f}，第一目标 ${sr['s1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
+        tp = calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol)
+        
+        # 趋势判断
+        trend = pred.get("trend", "震荡")
+        trend_note = ""
+        if trend == "震荡" and score >= 55:
+            trend_note = "（趋势震荡，轻仓试多）"
+        elif trend == "震荡" and score <= 45:
+            trend_note = "（趋势震荡，轻仓试空）"
+        
+        if tp["direction"] == "long":
+            advice = f"可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，第一目标 ${tp['tp1']:,.2f}（+3%），第二目标 ${tp['tp2']:,.2f}（+4%），建议持仓 {ht['min_text']}~{ht['max_text']}"
+        elif tp["direction"] == "short":
+            advice = f"可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，第一目标 ${tp['tp1']:,.2f}（-3%），第二目标 ${tp['tp2']:,.2f}（-4%），建议持仓 {ht['min_text']}~{ht['max_text']}"
         else:
-            advice = f"信号不明确，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
+            advice = f"信号不明确，趋势{trend}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
         
         return jsonify({
             "symbol": symbol,
