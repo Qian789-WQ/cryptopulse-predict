@@ -204,6 +204,15 @@ def calc_support_resistance(df):
     r2 = pivot + (high - low)
     s2 = pivot - (high - low)
     
+    return {
+        "pivot": round(float(pivot), 2),
+        "r1": round(float(r1), 2),
+        "r2": round(float(r2), 2),
+        "s1": round(float(s1), 2),
+        "s2": round(float(s2), 2),
+        "swing_high": round(float(high), 2),
+        "swing_low": round(float(low), 2)
+    }
 
 
 def calc_holding_time(timeframe, prediction, atr, current_price):
