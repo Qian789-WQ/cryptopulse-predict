@@ -7,6 +7,40 @@ import requests
 import numpy as np
 import pandas as pd
 from datetime import datetime
+import time
+import hashlib
+
+# 简单内存缓存
+_cache = {}
+_CACHE_TTL = 30  # 缓存30秒
+
+def get_cache(key):
+    if key in _cache:
+        data, ts = _cache[key]
+        if time.time() - ts < _CACHE_TTL:
+            return data
+        else:
+            del _cache[key]
+    return None
+
+def set_cache(key, data):
+    _cache[key] = (data, time.time())
+    if len(_cache) > 100:  # 最多缓存100条
+        oldest = min(_cache.keys(), key=lambda k: _cache[k][1])
+        del _cache[oldest]
+
+def fetch_with_retry(url, params=None, retries=2, timeout=10):
+    """带重试的HTTP请求"""
+    for i in range(retries):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 200:
+                return resp
+        except Exception:
+            if i == retries - 1:
+                raise
+            time.sleep(0.5)
+    return None
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -438,23 +472,32 @@ def analyze_multi_timeframe(symbol, current_timeframe):
 
 
 def get_funding_rate(symbol):
-    """获取当前资金费率"""
+    """获取当前资金费率（带缓存）"""
+    cache_key = f"funding_{symbol}"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
+    
     try:
         url = "https://www.okx.com/api/v5/public/funding-rate"
         params = {"instId": symbol}
-        resp = requests.get(url, params=params, timeout=10)
+        resp = fetch_with_retry(url, params=params, retries=2, timeout=8)
+        if resp is None:
+            return {"rate": 0, "rate_text": "--", "next_time": 0, "next_time_text": "--", "warning": False}
         data = resp.json()
         if data.get("code") == "0" and data.get("data"):
             item = data["data"][0]
             rate = float(item.get("fundingRate", 0)) * 100  # 转成百分比
             next_time = int(item.get("nextFundingTime", 0))
-            return {
+            result = {
                 "rate": round(rate, 4),
                 "rate_text": f"{rate:+.4f}%",
                 "next_time": next_time,
                 "next_time_text": datetime.fromtimestamp(next_time/1000).strftime("%H:%M") if next_time else "--",
-                "warning": rate > 0.05 or rate < -0.05  # 费率过高提醒
+                "warning": rate > 0.05 or rate < -0.05
             }
+            set_cache(cache_key, result)
+            return result
     except Exception as e:
         pass
     return {"rate": 0, "rate_text": "--", "next_time": 0, "next_time_text": "--", "warning": False}
@@ -603,6 +646,9 @@ def api_predict():
             "vol_ratio": float(latest["vol_ratio"]),
             "rsi": float(latest["rsi"]),
             "atr": float(latest["atr"]),
+            "kdj": {"k": round(float(latest["kdj_k"]), 1), "d": round(float(latest["kdj_d"]), 1), "j": round(float(latest["kdj_j"]), 1)},
+            "cci": round(float(latest["cci"]), 1),
+            "willr": round(float(latest["willr"]), 1),
             "prediction": pred,
             "score": score,
             "signal": signal,
