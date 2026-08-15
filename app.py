@@ -289,12 +289,21 @@ SYMBOLS = [
 ]
 
 TIMEFRAMES = [
-    {"id": "1m", "name": "1分钟"},
-    {"id": "5m", "name": "5分钟"},
-    {"id": "15m", "name": "15分钟"},
-    {"id": "1H", "name": "1小时"},
-    {"id": "4H", "name": "4小时"},
-    {"id": "1D", "name": "日线"},
+    {"id": "1m", "name": "1分"},
+    {"id": "3m", "name": "3分"},
+    {"id": "5m", "name": "5分"},
+    {"id": "15m", "name": "15分"},
+    {"id": "30m", "name": "30分"},
+    {"id": "1H", "name": "1时"},
+    {"id": "2H", "name": "2时"},
+    {"id": "4H", "name": "4时"},
+    {"id": "6H", "name": "6时"},
+    {"id": "8H", "name": "8时"},
+    {"id": "12H", "name": "12时"},
+    {"id": "1D", "name": "1天"},
+    {"id": "3D", "name": "3天"},
+    {"id": "1W", "name": "1周"},
+    {"id": "1M", "name": "1月"},
 ]
 
 def fetch_klines(symbol, timeframe, limit=500):
