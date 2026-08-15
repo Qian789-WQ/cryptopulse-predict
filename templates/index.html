@@ -268,7 +268,7 @@
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
             <div class="grid-2">
-                <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">✓ 已下单</button></div>
+                <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <span><button id="closeOrderBtn" onclick="quickCloseOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(231,76,60,0.3);margin-right:6px">✗ 平仓</button><button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">✓ 已下单</button></span></div>
                     <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
                     <div id="multiTfConfirm" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="tradePlan"></div>
@@ -426,14 +426,21 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 document.getElementById('advancedSignals').innerHTML=adv.length?adv.join(''):`<div style="text-align:center;color:#525f7a;padding:10px">无特殊信号</div>`;
                 document.getElementById('adviceText').textContent=d.advice;
                 
-                // 显示已下单按钮
+                // 显示已下单和平仓按钮
                 const orderBtn=document.getElementById('placeOrderBtn');
-                if(d.trade_plan.direction!=='neutral'){
+                const closeBtn=document.getElementById('closeOrderBtn');
+                const orders=getOrders();
+                const hasOpenOrder=orders.some(o=>o.status==='open'&&o.symbol===d.symbol);
+                if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder){
                     orderBtn.style.display='inline-block';
                     orderBtn.textContent='✓ 已下单';
-                    orderBtn.style.background='#2ecc71';
                 }else{
                     orderBtn.style.display='none';
+                }
+                if(hasOpenOrder){
+                    closeBtn.style.display='inline-block';
+                }else{
+                    closeBtn.style.display='none';
                 }
                 
                 // 显示持仓时间提醒
@@ -639,6 +646,29 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         function getOrders(){return JSON.parse(localStorage.getItem('cp_orders')||'[]')}
         function saveOrders(orders){localStorage.setItem('cp_orders',JSON.stringify(orders))}
         
+        function quickCloseOrder(){
+            const orders=getOrders();
+            const openOrders=orders.filter(o=>o.status==='open'&&o.symbol===selectedSymbol);
+            if(openOrders.length===0){alert('当前币种没有持仓');return}
+            const order=openOrders[0];
+            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, currentData?currentData.current_price:order.entry);
+            if(!price)return;
+            const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
+            const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
+            order.status='closed';
+            order.close_price=parseFloat(price);
+            order.close_time=new Date().toISOString();
+            order.close_time_str=new Date().toLocaleString('zh-CN');
+            order.pnl=Math.round(pnl*100)/100;
+            order.pnl_pct=Math.round(pnlPct*100)/100;
+            order.close_reason='手动平仓';
+            saveOrders(orders);
+            // 刷新按钮状态
+            document.getElementById('closeOrderBtn').style.display='none';
+            document.getElementById('placeOrderBtn').style.display='inline-block';
+            alert(`✅ 平仓成功！\n\n盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n收益率: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%\n\n记录已保存，可在历史→下单记录查看`);
+        }
+        
         function placeOrder(){
             if(!currentData||currentData.trade_plan.direction==='neutral'){alert('当前无明确交易信号');return}
             const d=currentData;
@@ -757,27 +787,36 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <span>杠杆: ${o.leverage}x 仓位: ${o.position_pct}%</span>
                     </div>
                     <div style="font-size:10px;color:#525f7a;margin-top:4px">${o.time_str} · ${o.reasons.slice(0,2).join(' · ')}</div>
-                    ${o.status==='open'?`<div style="margin-top:6px"><button onclick="closeOrder(${o.id})" style="padding:3px 8px;background:#e74c3c;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer">平仓</button> <button onclick="viewOrderDetail(${o.id})" style="padding:3px 8px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;margin-left:4px">详情</button></div>`:''}
+                    ${o.status==='open'?`<div style="margin-top:6px"><button onclick="closeOrder(${o.id})" style="padding:4px 10px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">✗ 平仓</button> <button onclick="viewOrderDetail(${o.id})" style="padding:4px 10px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer;margin-left:6px">📋 详情</button></div>`:`<div style="margin-top:6px;font-size:11px"><span style="color:${o.pnl>=0?'#2ecc71':'#e74c3c'}">盈亏: ${o.pnl>=0?'+':''}${o.pnl} USDT (${o.pnl_pct>=0?'+':''}${o.pnl_pct}%)</span> <span style="color:#525f7a;margin-left:8px">平仓价: $${o.close_price}</span> <button onclick="viewOrderDetail(${o.id})" style="padding:3px 8px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;margin-left:6px">详情</button></div>`}
                 </div>`;
             }).join('');
         }
         
         function closeOrder(id){
-            const price=prompt('请输入平仓价格:');
-            if(!price)return;
             const orders=getOrders();
             const order=orders.find(o=>o.id===id);
             if(!order)return;
+            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, order.entry);
+            if(!price)return;
             const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
             const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
             order.status='closed';
             order.close_price=parseFloat(price);
             order.close_time=new Date().toISOString();
-            order.pnl=round(pnl,2);
-            order.pnl_pct=round(pnlPct,2);
+            order.close_time_str=new Date().toLocaleString('zh-CN');
+            order.pnl=Math.round(pnl*100)/100;
+            order.pnl_pct=Math.round(pnlPct*100)/100;
+            order.close_reason='手动平仓';
+            // 记录平仓时的市场数据
+            if(currentData){
+                order.close_rsi=currentData.rsi;
+                order.close_adx=currentData.adx;
+                order.close_price_market=currentData.current_price;
+                order.close_trend=currentData.prediction.trend;
+            }
             saveOrders(orders);
             renderOrders();
-            alert(`平仓成功！盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT (${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%)`);
+            alert(`✅ 平仓成功！\n\n盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n收益率: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%\n\n完整记录已保存`);
         }
         
         function viewOrderDetail(id){
