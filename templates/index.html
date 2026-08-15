@@ -223,7 +223,21 @@
             </div>
             <!-- 回测结果面板 -->
             <div class="card" id="backtestPanel" style="display:none;margin-bottom:12px">
-                <div class="card-title">📊 历史回测结果</div>
+                <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📊 历史回测结果 <button onclick="clearBacktest()" style="padding:4px 10px;background:#e74c3c;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">清除结果</button></div>
+                <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+                    <span style="font-size:11px;color:#8892b0">初始资金:</span>
+                    <input type="number" id="backtestCapital" value="1000" style="width:100px;padding:5px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px">
+                    <span style="font-size:11px;color:#525f7a">USDT</span>
+                    <span style="font-size:11px;color:#525f7a;margin-left:10px">回测天数:</span>
+                    <select id="backtestDays" style="padding:5px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px">
+                        <option value="7">7天</option>
+                        <option value="14">14天</option>
+                        <option value="30" selected>30天</option>
+                        <option value="60">60天</option>
+                        <option value="90">90天</option>
+                    </select>
+                    <button onclick="runBacktest()" style="padding:5px 12px;background:#667eea;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">开始回测</button>
+                </div>
                 <div id="backtestResult" style="font-size:12px"></div>
             </div>
             <div class="price-card">
@@ -853,11 +867,12 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         async function runBacktest(){
             const panel=document.getElementById('backtestPanel');
             const result=document.getElementById('backtestResult');
+            const capital=parseFloat(document.getElementById('backtestCapital').value)||1000;
+            const days=document.getElementById('backtestDays').value;
             panel.style.display='block';
             result.innerHTML='<div style="text-align:center;padding:20px;color:#525f7a">回测中，请稍候...</div>';
-            panel.scrollIntoView({behavior:'smooth'});
             try{
-                const resp=await fetch(`/api/backtest?symbol=${selectedSymbol}&timeframe=${document.getElementById('timeframe').value}&days=30`);
+                const resp=await fetch(`/api/backtest?symbol=${selectedSymbol}&timeframe=${document.getElementById('timeframe').value}&days=${days}&capital=${capital}`);
                 const data=await resp.json();
                 if(data.error){result.innerHTML=`<div style="color:#e74c3c;text-align:center;padding:20px">回测失败: ${data.error}</div>`;return}
                 const pnlColor=data.total_pnl>=0?'green':'red';
@@ -870,9 +885,43 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                     </div>
-                    <div style="font-size:11px;color:#525f7a">回测周期: 近30天 · 初始资金$1000 · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                    <div style="font-size:11px;color:#525f7a">回测周期: 近${data.days}天 · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
                 `;
+                // 保存回测结果
+                localStorage.setItem('cp_backtest_result', JSON.stringify(data));
             }catch(e){result.innerHTML=`<div style="color:#e74c3c;text-align:center;padding:20px">回测失败: ${e.message}</div>`}
+        }
+        
+        function clearBacktest(){
+            if(confirm('确定清除回测结果？')){
+                localStorage.removeItem('cp_backtest_result');
+                document.getElementById('backtestResult').innerHTML='<div style="text-align:center;padding:20px;color:#525f7a">点击"开始回测"查看策略表现</div>';
+            }
+        }
+        
+        // 页面加载时恢复回测结果
+        function loadBacktestResult(){
+            const saved=localStorage.getItem('cp_backtest_result');
+            if(saved){
+                try{
+                    const data=JSON.parse(saved);
+                    const panel=document.getElementById('backtestPanel');
+                    const result=document.getElementById('backtestResult');
+                    panel.style.display='block';
+                    const pnlColor=data.total_pnl>=0?'green':'red';
+                    result.innerHTML=`
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px">
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.total_trades}</div><div style="font-size:10px;color:#525f7a">总交易</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${data.win_rate>=50?'green':'red'}">${data.win_rate}%</div><div style="font-size:10px;color:#525f7a">胜率</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">${data.total_pnl>=0?'+':''}${data.total_pnl_pct}%</div><div style="font-size:10px;color:#525f7a">总收益</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#e74c3c">${data.max_drawdown}%</div><div style="font-size:10px;color:#525f7a">最大回撤</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
+                        </div>
+                        <div style="font-size:11px;color:#525f7a">回测周期: 近${data.days}天 · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                    `;
+                }catch(e){}
+            }
         }
         
         window.addEventListener('load',()=>{
@@ -880,6 +929,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             predict();
             renderAlerts();
             loadFearGreed();
+            loadBacktestResult();
             const savedKey=getWechatKey();
             if(savedKey){document.getElementById('wechatKey').value=savedKey;document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 微信推送已启用</span>'}
             // 每30秒检查价格提醒

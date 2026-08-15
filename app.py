@@ -1247,6 +1247,7 @@ def api_backtest():
         symbol = request.args.get("symbol", "BTC-USDT-SWAP")
         timeframe = request.args.get("timeframe", "1H")
         days = int(request.args.get("days", 30))
+        initial_balance = float(request.args.get("capital", 1000))
         
         # 获取历史数据
         limit = min(days * 24, 500) if timeframe == "1H" else 500
@@ -1257,7 +1258,6 @@ def api_backtest():
         df = calc_indicators(df)
         
         # 回测参数
-        initial_balance = 1000
         balance = initial_balance
         trades = []
         position = None
