@@ -210,9 +210,16 @@
             </div>
             <!-- 历史面板 -->
             <div class="card" id="historyPanel" style="display:none;margin-bottom:12px">
-                <div class="card-title">📈 信号历史与准确率</div>
+                <div class="card-title">📈 历史记录
+                    <span style="float:right;font-size:11px">
+                        <button onclick="switchHistoryTab('predictions')" id="tabPred" style="padding:3px 8px;background:#667eea;border:none;border-radius:4px;color:#fff;cursor:pointer">预测记录</button>
+                        <button onclick="switchHistoryTab('orders')" id="tabOrder" style="padding:3px 8px;background:#1a2340;border:none;border-radius:4px;color:#8892b0;cursor:pointer;margin-left:4px">下单记录</button>
+                        <button onclick="clearOrders()" style="padding:3px 8px;background:#e74c3c;border:none;border-radius:4px;color:#fff;cursor:pointer;margin-left:4px">清空</button>
+                    </span>
+                </div>
                 <div id="historyStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px"></div>
-                <div id="historyList" style="max-height:300px;overflow-y:auto"></div>
+                <div id="historyList" style="max-height:400px;overflow-y:auto"></div>
+                <div id="orderList" style="max-height:400px;overflow-y:auto;display:none"></div>
             </div>
             <!-- 回测结果面板 -->
             <div class="card" id="backtestPanel" style="display:none;margin-bottom:12px">
@@ -261,7 +268,7 @@
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
             <div class="grid-2">
-                <div class="card"><div class="card-title">📋 交易计划</div>
+                <div class="card"><div class="card-title">📋 交易计划 <button id="placeOrderBtn" onclick="placeOrder()" style="float:right;padding:4px 12px;background:#2ecc71;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer;display:none">✓ 已下单</button></div>
                     <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
                     <div id="multiTfConfirm" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="tradePlan"></div>
@@ -418,6 +425,16 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 if(d.time_filter.is_bad_time){adv.push(`<div class="anomaly-item" style="border-left-color:#e74c3c">⏰ ${d.time_filter.reason}</div>`)}
                 document.getElementById('advancedSignals').innerHTML=adv.length?adv.join(''):`<div style="text-align:center;color:#525f7a;padding:10px">无特殊信号</div>`;
                 document.getElementById('adviceText').textContent=d.advice;
+                
+                // 显示已下单按钮
+                const orderBtn=document.getElementById('placeOrderBtn');
+                if(d.trade_plan.direction!=='neutral'){
+                    orderBtn.style.display='inline-block';
+                    orderBtn.textContent='✓ 已下单';
+                    orderBtn.style.background='#2ecc71';
+                }else{
+                    orderBtn.style.display='none';
+                }
                 
                 // 显示持仓时间提醒
                 if(d.holding_time){
@@ -615,6 +632,163 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 await fetch('/api/wechat-push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sendkey:key,title,desp})});
                 return true;
             }catch(e){return false}
+        }
+        
+        // 下单记录
+        let currentHistoryTab='predictions';
+        function getOrders(){return JSON.parse(localStorage.getItem('cp_orders')||'[]')}
+        function saveOrders(orders){localStorage.setItem('cp_orders',JSON.stringify(orders))}
+        
+        function placeOrder(){
+            if(!currentData||currentData.trade_plan.direction==='neutral'){alert('当前无明确交易信号');return}
+            const d=currentData;
+            const tp=d.trade_plan;
+            const order={
+                id:Date.now(),
+                time:new Date().toISOString(),
+                time_str:new Date().toLocaleString('zh-CN'),
+                symbol:d.symbol,
+                timeframe:d.timeframe,
+                direction:tp.direction,
+                direction_text:tp.direction_text,
+                signal_strength:tp.signal_strength,
+                strength_text:tp.strength_text,
+                score:d.score,
+                signal:d.signal,
+                entry:tp.entry,
+                stop_loss:tp.stop_loss,
+                tp1:tp.tp1,tp2:tp.tp2,tp3:tp.tp3,
+                tp1_close_pct:tp.tp1_close_pct,
+                tp2_close_pct:tp.tp2_close_pct,
+                tp3_close_pct:tp.tp3_close_pct,
+                position_pct:tp.position_pct,
+                risk_reward:tp.risk_reward,
+                risk_amount:tp.risk_amount,
+                leverage:d.leverage.recommended_leverage,
+                win_rate:d.win_rate,
+                kelly_pct:d.kelly.half_kelly_pct,
+                // 技术指标
+                current_price:d.current_price,
+                pct_change:d.pct_change,
+                rsi:d.rsi,
+                kdj:d.kdj,
+                cci:d.cci,
+                adx:d.adx,
+                atr:d.atr,
+                vol_ratio:d.vol_ratio,
+                funding_rate:d.funding_rate.rate,
+                // 分析结果
+                trend:d.prediction.trend,
+                momentum:d.prediction.momentum,
+                volatility:d.prediction.volatility,
+                holding_time:d.holding_time,
+                multi_tf:d.multi_tf,
+                multi_tf_confirm:d.multi_tf_confirm,
+                divergence:d.divergence,
+                fake_breakout:d.fake_breakout,
+                candlestick:d.candlestick,
+                streak:d.streak,
+                time_filter:d.time_filter,
+                trailing_stop:d.trailing_stop,
+                reasons:d.reasons,
+                advice:d.advice,
+                support_resistance:d.support_resistance,
+                fib_levels:d.fib_levels,
+                // 状态
+                status:'open',
+                close_price:null,
+                close_time:null,
+                pnl:null,
+                pnl_pct:null,
+                notes:''
+            };
+            const orders=getOrders();
+            orders.unshift(order);
+            saveOrders(orders);
+            document.getElementById('placeOrderBtn').textContent='✓ 已记录';
+            document.getElementById('placeOrderBtn').style.background='#525f7a';
+            setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='✓ 已下单';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
+            alert('下单记录已保存！可在历史记录→下单记录中查看');
+        }
+        
+        function switchHistoryTab(tab){
+            currentHistoryTab=tab;
+            document.getElementById('tabPred').style.background=tab==='predictions'?'#667eea':'#1a2340';
+            document.getElementById('tabPred').style.color=tab==='predictions'?'#fff':'#8892b0';
+            document.getElementById('tabOrder').style.background=tab==='orders'?'#667eea':'#1a2340';
+            document.getElementById('tabOrder').style.color=tab==='orders'?'#fff':'#8892b0';
+            document.getElementById('historyList').style.display=tab==='predictions'?'block':'none';
+            document.getElementById('orderList').style.display=tab==='orders'?'block':'none';
+            if(tab==='orders')renderOrders();
+        }
+        
+        function renderOrders(){
+            const orders=getOrders();
+            const el=document.getElementById('orderList');
+            if(orders.length===0){el.innerHTML='<div style="text-align:center;color:#525f7a;padding:20px">暂无下单记录，点交易计划卡的"已下单"按钮记录</div>';return}
+            // 统计
+            const openOrders=orders.filter(o=>o.status==='open');
+            const closedOrders=orders.filter(o=>o.status==='closed');
+            const wins=closedOrders.filter(o=>o.pnl>0);
+            const totalPnl=closedOrders.reduce((s,o)=>s+(o.pnl||0),0);
+            const winRate=closedOrders.length?wins.length/closedOrders.length*100:0;
+            document.getElementById('historyStats').innerHTML=`
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${orders.length}</div><div style="font-size:10px;color:#525f7a">总下单</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#f39c12">${openOrders.length}</div><div style="font-size:10px;color:#525f7a">持仓中</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${winRate>=50?'#2ecc71':'#e74c3c'}">${winRate.toFixed(0)}%</div><div style="font-size:10px;color:#525f7a">平仓胜率</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${totalPnl>=0?'#2ecc71':'#e74c3c'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(0)}</div><div style="font-size:10px;color:#525f7a">累计盈亏</div></div>
+            `;
+            el.innerHTML=orders.map(o=>{
+                const color=o.direction==='long'?'#2ecc71':'#e74c3c';
+                const statusColor=o.status==='open'?'#f39c12':o.pnl>0?'#2ecc71':'#e74c3c';
+                return `<div style="padding:10px;background:#131a2b;border-radius:6px;margin-bottom:6px;border-left:3px solid ${color}">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                        <span style="font-weight:700">${o.symbol.replace('-USDT-SWAP','')} ${o.timeframe} <span style="color:${color}">${o.direction_text}</span></span>
+                        <span style="color:${statusColor};font-size:11px">${o.status==='open'?'持仓中':o.pnl>0?'盈利':'亏损'}</span>
+                    </div>
+                    <div style="font-size:11px;color:#8892b0;display:grid;grid-template-columns:1fr 1fr;gap:2px">
+                        <span>入场: $${o.entry.toLocaleString()}</span>
+                        <span>止损: $${o.stop_loss.toLocaleString()}</span>
+                        <span>TP1: $${o.tp1.toLocaleString()}</span>
+                        <span>TP3: $${o.tp3.toLocaleString()}</span>
+                        <span>评分: ${o.score}分 (${o.strength_text})</span>
+                        <span>胜率: ${o.win_rate}%</span>
+                        <span>RSI: ${o.rsi.toFixed(0)} ADX: ${o.adx.toFixed(0)}</span>
+                        <span>杠杆: ${o.leverage}x 仓位: ${o.position_pct}%</span>
+                    </div>
+                    <div style="font-size:10px;color:#525f7a;margin-top:4px">${o.time_str} · ${o.reasons.slice(0,2).join(' · ')}</div>
+                    ${o.status==='open'?`<div style="margin-top:6px"><button onclick="closeOrder(${o.id})" style="padding:3px 8px;background:#e74c3c;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer">平仓</button> <button onclick="viewOrderDetail(${o.id})" style="padding:3px 8px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;margin-left:4px">详情</button></div>`:''}
+                </div>`;
+            }).join('');
+        }
+        
+        function closeOrder(id){
+            const price=prompt('请输入平仓价格:');
+            if(!price)return;
+            const orders=getOrders();
+            const order=orders.find(o=>o.id===id);
+            if(!order)return;
+            const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
+            const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
+            order.status='closed';
+            order.close_price=parseFloat(price);
+            order.close_time=new Date().toISOString();
+            order.pnl=round(pnl,2);
+            order.pnl_pct=round(pnlPct,2);
+            saveOrders(orders);
+            renderOrders();
+            alert(`平仓成功！盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT (${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%)`);
+        }
+        
+        function viewOrderDetail(id){
+            const orders=getOrders();
+            const o=orders.find(x=>x.id===id);
+            if(!o)return;
+            alert(`交易详情\n\n币种: ${o.symbol}\n周期: ${o.timeframe}\n方向: ${o.direction_text}\n评分: ${o.score}分 (${o.strength_text})\n\n入场: $${o.entry}\n止损: $${o.stop_loss}\nTP1: $${o.tp1} (平${o.tp1_close_pct}%)\nTP2: $${o.tp2} (平${o.tp2_close_pct}%)\nTP3: $${o.tp3} (平${o.tp3_close_pct}%)\n\n仓位: ${o.position_pct}%\n杠杆: ${o.leverage}x\n预估胜率: ${o.win_rate}%\n凯利仓位: ${o.kelly_pct}%\n\nRSI: ${o.rsi.toFixed(1)}\nKDJ: K${o.kdj.k.toFixed(0)} D${o.kdj.d.toFixed(0)} J${o.kdj.j.toFixed(0)}\nCCI: ${o.cci.toFixed(0)}\nADX: ${o.adx.toFixed(1)}\nATR: $${o.atr}\n量比: ${o.vol_ratio}\n资金费率: ${o.funding_rate}%\n\n趋势: ${o.trend}\n动量: ${o.momentum}%\n波动率: ${o.volatility}%\n建议持仓: ${o.holding_time.min_text}~${o.holding_time.max_text}\n\n多周期: ${o.multi_tf.resonance}\n多周期确认: ${o.multi_tf_confirm.reason}\n背离: ${o.divergence.has_divergence?'有':'无'}\n假突破: ${o.fake_breakout.is_fake?o.fake_breakout.text:'无'}\nK线形态: ${o.candlestick.count>0?o.candlestick.patterns.map(p=>p.name).join(','):'无'}\n连涨: ${o.streak.up_streak} 连跌: ${o.streak.down_streak}\n\n信号原因:\n${o.reasons.join('\n')}\n\n操作建议:\n${o.advice}`);
+        }
+        
+        function clearOrders(){
+            if(confirm('确定清空所有下单记录？')){localStorage.removeItem('cp_orders');renderOrders()}
         }
         
         // 加载恐慌贪婪指数
