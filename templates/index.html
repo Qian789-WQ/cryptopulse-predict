@@ -823,6 +823,70 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         
         // 实时价格缓存
         let livePrices={};
+        let ws=null;
+        let wsConnected=false;
+        
+        // WebSocket实时价格
+        function connectWebSocket(){
+            if(ws)ws.close();
+            try{
+                ws=new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
+                ws.onopen=()=>{
+                    wsConnected=true;
+                    console.log('WebSocket已连接');
+                    subscribeSymbol(selectedSymbol);
+                };
+                ws.onmessage=(event)=>{
+                    try{
+                        const msg=JSON.parse(event.data);
+                        if(msg.data&&msg.data.length>0){
+                            const price=parseFloat(msg.data[0].last);
+                            if(price>0)handleWsPrice(price);
+                        }
+                    }catch(e){}
+                };
+                ws.onclose=()=>{
+                    wsConnected=false;
+                    setTimeout(connectWebSocket,5000);
+                };
+                ws.onerror=()=>{wsConnected=false};
+            }catch(e){console.log('WebSocket连接失败',e)}
+        }
+        
+        function subscribeSymbol(symbol){
+            if(ws&&wsConnected){
+                try{
+                    ws.send(JSON.stringify({op:'unsubscribe',args:[{channel:'tickers',instId:symbol}]}));
+                    ws.send(JSON.stringify({op:'subscribe',args:[{channel:'tickers',instId:symbol}]}));
+                }catch(e){}
+            }
+        }
+        
+        function handleWsPrice(price){
+            const priceEl=document.getElementById('currentPrice');
+            if(priceEl){
+                const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||price;
+                priceEl.textContent='$'+price.toLocaleString();
+                if(price>oldPrice)priceEl.style.color='#2ecc71';
+                else if(price<oldPrice)priceEl.style.color='#e74c3c';
+                setTimeout(()=>{priceEl.style.color=''},1000);
+            }
+            if(currentData)currentData.current_price=price;
+            livePrices[selectedSymbol]=price;
+            // 检查订单提醒
+            const orders=getOrders();
+            orders.filter(o=>o.status==='open'&&o.symbol===selectedSymbol).forEach(o=>{
+                try{checkOrderAlerts(o,price)}catch(e){}
+            });
+            // 刷新下单记录
+            if(currentHistoryTab==='orders'&&document.getElementById('historyPanel').style.display!=='none'){
+                try{renderOrders()}catch(e){}
+            }
+            // 刷新补仓/平仓卡片
+            if(currentData){
+                try{renderPyramidCard(currentData)}catch(e){}
+            }
+        }
         
         // 已提醒的价位记录，避免重复提醒
         let alertedLevels={};
@@ -1066,12 +1130,13 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const tagOptions=['追高','抄底','突破','回调','情绪化','FOMO','止损','止盈','系统信号','手动交易'];
             
             const modal=document.createElement('div');
-            modal.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+            modal.id='noteModal';
+            modal.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
             modal.innerHTML=`
                 <div style="background:#141b2d;border:1px solid #2a3450;border-radius:12px;padding:20px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
                         <h3 style="color:#fff;font-size:16px">📝 交易复盘 - ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}</h3>
-                        <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background:none;border:none;color:#8892b0;font-size:20px;cursor:pointer">×</button>
+                        <button onclick="document.getElementById('noteModal').remove()" style="background:none;border:none;color:#8892b0;font-size:20px;cursor:pointer;z-index:100000;position:relative">×</button>
                     </div>
                     <div style="font-size:11px;color:#8892b0;margin-bottom:12px">
                         入场: $${order.entry} | 止损: $${order.stop_loss} | TP1: $${order.tp1}
@@ -1103,7 +1168,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                             <option value="犹豫" ${order.psych_state==='犹豫'?'selected':''}>犹豫错过</option>
                         </select>
                     </div>
-                    <button onclick="saveOrderNote(${order.id})" style="width:100%;padding:10px;background:linear-gradient(135deg,#667eea,#764ba2);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer">保存复盘</button>
+                    <button onclick="saveOrderNote(${order.id})" style="width:100%;padding:12px;background:linear-gradient(135deg,#667eea,#764ba2);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;z-index:100000;position:relative;box-shadow:0 4px 15px rgba(102,126,234,0.4)">保存复盘</button>
                 </div>
             `;
             document.body.appendChild(modal);
@@ -1127,19 +1192,26 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         }
         
         function saveOrderNote(id){
-            const orders=getOrders();
-            const order=orders.find(o=>o.id===id);
-            if(!order)return;
-            const selectedTags=Array.from(document.querySelectorAll('.tag-option')).filter(el=>el.style.background==='rgb(102, 126, 234)').map(el=>el.dataset.tag);
-            order.tags=selectedTags;
-            order.open_reason=document.getElementById('openReason').value;
-            order.close_reason=document.getElementById('closeReason').value;
-            order.psych_state=document.getElementById('psychState').value;
-            order.notes=document.getElementById('closeReason').value;
-            saveOrders(orders);
-            document.querySelector('[style*="z-index:9999"]').remove();
-            renderOrders();
-            alert('复盘笔记已保存！');
+            try{
+                const orders=getOrders();
+                const order=orders.find(o=>o.id===id);
+                if(!order){alert('未找到订单');return;}
+                const selectedTags=Array.from(document.querySelectorAll('.tag-option')).filter(el=>el.style.background==='rgb(102, 126, 234)'||el.style.background==='#667eea').map(el=>el.dataset.tag);
+                order.tags=selectedTags;
+                const openReason=document.getElementById('openReason');
+                const closeReason=document.getElementById('closeReason');
+                const psychState=document.getElementById('psychState');
+                if(openReason)order.open_reason=openReason.value;
+                if(closeReason){order.close_reason=closeReason.value;order.notes=closeReason.value;}
+                if(psychState)order.psych_state=psychState.value;
+                saveOrders(orders);
+                const modal=document.getElementById('noteModal');
+                if(modal)modal.remove();
+                renderOrders();
+                alert('✅ 复盘笔记已保存！');
+            }catch(e){
+                alert('保存失败: '+e.message);
+            }
         }
         
         function clearOrders(){
@@ -1151,6 +1223,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             try{
                 const resp=await fetch('/api/fear-greed');
                 const data=await resp.json();
+                // 保存到currentData，供predict显示
+                if(currentData){
+                    currentData.fear_greed = data;
+                }
                 const el=document.getElementById('fearGreedVal');
                 if(el){
                     el.textContent=data.value;
@@ -1162,7 +1238,32 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     el.style.color=color;
                     el.title=data.classification;
                 }
+                // 如果当前有数据，更新评分卡显示
+                if(currentData && currentData.rsi){
+                    updateScoreDetail(currentData);
+                }
             }catch(e){}
+            
+        }
+        
+        function updateScoreDetail(d){
+            if(!d)return;
+            let fgText = '';
+            if(d.fear_greed){
+                const v = d.fear_greed.value;
+                let fgLabel = '';
+                let fgColor = '';
+                if(v <= 24){fgLabel='极度恐惧';fgColor='#e74c3c';}
+                else if(v <= 44){fgLabel='恐惧';fgColor='#e67e22';}
+                else if(v <= 55){fgLabel='中性';fgColor='#f1c40f';}
+                else if(v <= 75){fgLabel='贪婪';fgColor='#2ecc71';}
+                else{fgLabel='极度贪婪';fgColor='#27ae60';}
+                fgText = ` · 恐慌贪婪 <span style="color:${fgColor};font-weight:600">${fgLabel}</span>`;
+            }
+            const el=document.getElementById('scoreDetail');
+            if(el){
+                el.innerHTML=`RSI ${d.rsi.toFixed(0)} · KDJ ${d.kdj?d.kdj.k.toFixed(0):'--'} · 量比 ${d.vol_ratio.toFixed(1)}${fgText}`;
+            }
         }
         
         // 运行回测
@@ -1299,6 +1400,109 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         
         // 静默更新页面数据（不改变显示状态）
         function updatePageData(d){
+            try{
+                // 更新价格
+                const priceEl=document.getElementById('currentPrice');
+                if(priceEl){
+                    const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||d.current_price;
+                    priceEl.textContent='$'+d.current_price.toLocaleString();
+                    if(d.current_price>oldPrice)priceEl.style.color='#2ecc71';
+                    else if(d.current_price<oldPrice)priceEl.style.color='#e74c3c';
+                    setTimeout(()=>{priceEl.style.color=''},1000);
+                }
+                
+                // 更新评分
+                const scoreEl=document.getElementById('scoreVal');
+                if(scoreEl)scoreEl.textContent=d.score;
+                const signalEl=document.getElementById('signalVal');
+                if(signalEl){
+                    signalEl.textContent=d.signal;
+                    signalEl.style.color=d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
+                }
+                
+                // 更新指标
+                const rsiEl=document.getElementById('rsiVal');
+                if(rsiEl)rsiEl.textContent=d.rsi.toFixed(1);
+                const volEl=document.getElementById('volVal');
+                if(volEl)volEl.textContent=d.vol_ratio.toFixed(1)+'x';
+                const atrEl=document.getElementById('atrVal');
+                if(atrEl)atrEl.textContent='$'+d.atr.toFixed(2);
+                const adxEl=document.getElementById('adxVal');
+                if(adxEl)adxEl.textContent=d.adx.toFixed(1);
+                const momEl=document.getElementById('momVal');
+                if(momEl)momEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
+                const winEl=document.getElementById('winRateVal');
+                if(winEl)winEl.textContent=d.win_rate+'%';
+                const levEl=document.getElementById('levVal');
+                if(levEl)levEl.textContent=d.leverage.recommended_leverage+'x';
+                const fundEl=document.getElementById('fundVal');
+                if(fundEl)fundEl.textContent=d.funding_rate.rate+'%';
+                const fgEl=document.getElementById('fearGreedVal');
+                if(fgEl&&d.fear_greed)fgEl.textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
+                
+                // 更新趋势
+                const trendEl=document.getElementById('trendVal');
+                if(trendEl)trendEl.textContent=d.prediction.trend;
+                
+                // 更新预测列表
+                const predEl=document.getElementById('predList');
+                if(predEl&&d.prediction.predicted){
+                    predEl.innerHTML=d.prediction.predicted.map((p,i)=>{
+                        const ch=(p-d.current_price)/d.current_price*100;
+                        const c=ch>=0?'#2ecc71':'#e74c3c';
+                        return `<div class="pred-item"><span>T+${i+1}</span><div class="bar"><div class="bar-fill" style="width:${Math.min(Math.abs(ch)*10,100)}%;background:${c}"></div></div><span style="font-family:'Courier New',monospace">$${p.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><span class="${ch>=0?'green':'red'}" style="width:50px;text-align:right">${ch>=0?'+':''}${ch.toFixed(2)}%</span></div>`;
+                    }).join('');
+                }
+                
+                // 更新交易计划
+                const tp=d.trade_plan;
+                const planEl=document.getElementById('tradePlan');
+                if(planEl&&tp.direction!=='neutral'){
+                    planEl.innerHTML=`
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+                            <div>方向: <strong style="color:${tp.direction==='long'?'#2ecc71':'#e74c3c'}">${tp.direction_text}</strong></div>
+                            <div>盈亏比: <strong>1:${tp.risk_reward}</strong></div>
+                            <div>入场: <strong>$${tp.entry.toFixed(2)}</strong></div>
+                            <div>止损: <strong style="color:#e74c3c">$${tp.stop_loss.toFixed(2)}</strong></div>
+                            <div>TP1(平${tp.tp1_close_pct}%): <strong style="color:#2ecc71">$${tp.tp1.toFixed(2)}</strong></div>
+                            <div>TP2(平${tp.tp2_close_pct}%): <strong style="color:#2ecc71">$${tp.tp2.toFixed(2)}</strong></div>
+                            <div>TP3(平${tp.tp3_close_pct}%): <strong style="color:#2ecc71">$${tp.tp3.toFixed(2)}</strong></div>
+                            <div>仓位: <strong>${tp.position_pct}%</strong></div>
+                        </div>
+                        <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
+                    `;
+                }
+                
+                // 更新补仓/平仓卡片
+                renderPyramidCard(d);
+            }catch(e){
+                console.log('updatePageData error:',e);
+            }
+        }
+        
+        function autoUpdatePredict(){
+            isAutoUpdating=true;
+            const scrollPos=window.scrollY;
+            const symbol=selectedSymbol;
+            const timeframe=document.getElementById('timeframe').value;
+            
+            try{
+                const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
+                const data=await resp.json();
+                if(!data.error){
+                    currentData=data;
+                    // 静默更新数据，不显示loading，不滚动
+                    updatePageData(data);
+                }
+            }catch(e){}
+            
+            // 恢复滚动位置
+            window.scrollTo(0, scrollPos);
+            isAutoUpdating=false;
+        }
+        
+        // 静默更新页面数据（不改变显示状态）
+        function updatePageData(d){
             // 更新价格
             const priceEl=document.getElementById('currentPrice');
             if(priceEl){
@@ -1308,38 +1512,41 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 else if(d.current_price<oldPrice)priceEl.style.color='#e74c3c';
                 setTimeout(()=>{priceEl.style.color=''},1000);
             }
-            document.getElementById('pctChange').textContent=(d.pct_change>=0?'+':'')+d.pct_change.toFixed(2)+'%';
-            document.getElementById('pctChange').style.color=d.pct_change>=0?'#2ecc71':'#e74c3c';
             
-            // 更新评分
-            const scoreEl=document.getElementById('score');
+            // 更新评分（使用正确的ID）
+            const scoreEl=document.getElementById('scoreVal');
             if(scoreEl)scoreEl.textContent=d.score;
-            const signalEl=document.getElementById('signal');
+            const signalEl=document.getElementById('signalVal');
             if(signalEl){
                 signalEl.textContent=d.signal;
                 signalEl.style.color=d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
             }
             
-            // 更新指标
-            document.getElementById('rsiVal').textContent=d.rsi.toFixed(1);
-            document.getElementById('macdVal').textContent=d.macd.macd_hist.toFixed(4);
-            document.getElementById('bbVal').textContent=d.bollinger.position;
-            document.getElementById('volVal').textContent=d.vol_ratio.toFixed(1)+'x';
-            document.getElementById('atrVal').textContent='$'+d.atr.toFixed(2);
-            document.getElementById('adxVal').textContent=d.adx.toFixed(1);
-            document.getElementById('momVal').textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
-            document.getElementById('winRateVal').textContent=d.win_rate+'%';
-            document.getElementById('leverageVal').textContent=d.leverage.recommended_leverage+'x';
-            document.getElementById('fundingVal').textContent=d.funding_rate.rate+'%';
+            // 更新指标（只更新存在的元素）
+            const rsiEl=document.getElementById('rsiVal');
+            if(rsiEl)rsiEl.textContent=d.rsi.toFixed(1);
+            const volEl=document.getElementById('volVal');
+            if(volEl)volEl.textContent=d.vol_ratio.toFixed(1)+'x';
+            const atrEl=document.getElementById('atrVal');
+            if(atrEl)atrEl.textContent='$'+d.atr.toFixed(2);
+            const adxEl=document.getElementById('adxVal');
+            if(adxEl)adxEl.textContent=d.adx.toFixed(1);
+            const momEl=document.getElementById('momVal');
+            if(momEl)momEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
+            const winEl=document.getElementById('winRateVal');
+            if(winEl)winEl.textContent=d.win_rate+'%';
+            const levEl=document.getElementById('levVal');
+            if(levEl)levEl.textContent=d.leverage.recommended_leverage+'x';
+            const fundEl=document.getElementById('fundVal');
+            if(fundEl)fundEl.textContent=d.funding_rate.rate+'%';
             if(d.fear_greed){
-                document.getElementById('fearGreedVal').textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
+                const fgEl=document.getElementById('fearGreedVal');
+                if(fgEl)fgEl.textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
             }
             
-            // 更新预测
-            document.getElementById('trendText').textContent=d.prediction.trend;
-            document.getElementById('predPrices').innerHTML=d.prediction.forecast.map((p,i)=>
-                `<div style="text-align:center"><div style="font-size:10px;color:#525f7a">+${i+1}根</div><div style="font-weight:700">$${p.toFixed(2)}</div></div>`
-            ).join('');
+            // 更新趋势
+            const trendEl=document.getElementById('trendVal');
+            if(trendEl)trendEl.textContent=d.prediction.trend;
             
             // 更新交易计划（如果有信号）
             if(d.trade_plan.direction!=='neutral'){
