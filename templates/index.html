@@ -1410,24 +1410,86 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             
             card.style.display='block';
             
-            if(tp.direction==='neutral'||!tp.pyramid||!tp.pyramid.enabled){
+            // 检查是否有该币种的持仓
+            const orders=getOrders();
+            const openOrder=orders.find(o=>o.status==='open'&&o.symbol===d.symbol);
+            
+            // 有持仓时，基于实际订单显示
+            if(openOrder){
+                const isLong=openOrder.direction==='long';
+                const color=isLong?'#2ecc71':'#e74c3c';
+                const entry=openOrder.entry;
+                const atr=openOrder.atr||100;
+                
+                const add2=isLong?entry-atr*0.5:entry+atr*0.5;
+                const add3=isLong?entry-atr*1.0:entry+atr*1.0;
+                const dist2=Math.abs(price-add2)/add2*100;
+                const dist3=Math.abs(price-add3)/add3*100;
+                const nextAdd = dist2<dist3 ? {price:add2, pct:30, dist:dist2, name:'二仓'} : {price:add3, pct:20, dist:dist3, name:'三仓'};
+                
+                const distTp1=Math.abs(price-openOrder.tp1)/openOrder.tp1*100;
+                const distSl=Math.abs(price-openOrder.stop_loss)/openOrder.stop_loss*100;
+                
+                const holdHours=(Date.now()-new Date(openOrder.time).getTime())/3600000;
+                const maxHours=openOrder.time_stop?openOrder.time_stop.max_holding_hours:24;
+                
                 content.innerHTML=`
-                    <div style="text-align:center;padding:20px 10px">
-                        <div style="font-size:13px;font-weight:700;color:#8892b0;margin-bottom:6px">${symbol} · 现价 $${price.toLocaleString()}</div>
-                        <div style="font-size:11px;color:#525f7a">当前无明确信号</div>
-                        <div style="font-size:10px;color:#525f7a;margin-top:4px">等待做多/做空信号出现</div>
+                    <div style="font-size:12px;font-weight:700;color:${color};margin-bottom:8px;text-align:center;padding-bottom:6px;border-bottom:1px solid #2a3450">
+                        📌 持仓中 · ${symbol} ${openOrder.direction_text}
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+                        <div style="text-align:center">
+                            <div style="font-size:9px;color:#525f7a">入场价</div>
+                            <div style="font-size:12px;font-weight:700;color:#fff">$${entry.toLocaleString()}</div>
+                        </div>
+                        <div style="text-align:center">
+                            <div style="font-size:9px;color:#525f7a">现价</div>
+                            <div style="font-size:12px;font-weight:700;color:${price>=entry?(isLong?'#2ecc71':'#e74c3c'):(isLong?'#e74c3c':'#2ecc71')}">$${price.toLocaleString()}</div>
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                        <div style="background:${nextAdd.dist<0.5?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${nextAdd.dist<0.5?'#2ecc71':'#2a3450'}">
+                            <div style="font-size:9px;color:#f39c12;font-weight:600">📥 补仓${nextAdd.name}</div>
+                            <div style="font-size:13px;font-weight:700;color:#fff">$${nextAdd.price.toLocaleString()}</div>
+                            <div style="font-size:9px;color:${nextAdd.dist<0.5?'#2ecc71':'#525f7a'}">${nextAdd.dist<0.5?'🔔 可补仓':'距'+nextAdd.dist.toFixed(1)+'%'}</div>
+                        </div>
+                        <div style="background:${distTp1<0.3?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${distTp1<0.3?'#2ecc71':'#2a3450'}">
+                            <div style="font-size:9px;color:#2ecc71;font-weight:600">💰 TP1止盈</div>
+                            <div style="font-size:13px;font-weight:700;color:#fff">$${openOrder.tp1.toLocaleString()}</div>
+                            <div style="font-size:9px;color:${distTp1<0.3?'#2ecc71':'#525f7a'}">${distTp1<0.3?'🔔 可止盈':'距'+distTp1.toFixed(1)+'%'}</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+                        <div style="text-align:center;font-size:9px">
+                            <span style="color:#e74c3c">止损 $${openOrder.stop_loss.toLocaleString()}</span>
+                            <span style="color:#525f7a"> (${distSl.toFixed(1)}%)</span>
+                        </div>
+                        <div style="text-align:center;font-size:9px">
+                            <span style="color:${holdHours>=maxHours?'#e74c3c':'#8892b0'}">⏰ ${holdHours.toFixed(1)}h</span>
+                            <span style="color:#525f7a">/${maxHours}h</span>
+                        </div>
                     </div>
                 `;
                 return;
             }
+            
+            // 无持仓时
+            if(tp.direction==='neutral'||!tp.pyramid||!tp.pyramid.enabled){
+                content.innerHTML=`
+                    <div style="text-align:center;padding:20px 10px">
+                        <div style="font-size:13px;font-weight:700;color:#8892b0;margin-bottom:6px">${symbol} · 现价 $${price.toLocaleString()}</div>
+                        <div style="font-size:11px;color:#525f7a">当前无持仓</div>
+                        <div style="font-size:10px;color:#525f7a;margin-top:4px">有信号并下单后显示实时监控</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 有信号但未下单，显示计划
             const p=tp.pyramid;
-            const ts=tp.time_stop;
             const isLong=tp.direction==='long';
             const color=isLong?'#2ecc71':'#e74c3c';
-            const symbol=d.symbol.replace('-USDT-SWAP','');
-            const price=d.current_price;
             
-            // 检查哪个补仓位最近
             const dist2=Math.abs(price-p.entry2.price)/p.entry2.price*100;
             const dist3=Math.abs(price-p.entry3.price)/p.entry3.price*100;
             const nextAdd = dist2<dist3 ? {price:p.entry2.price, pct:p.entry2.pct, dist:dist2, name:'二仓'} : {price:p.entry3.price, pct:p.entry3.pct, dist:dist3, name:'三仓'};
@@ -1437,22 +1499,19 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     ${symbol} ${tp.direction_text} · 现价 $${price.toLocaleString()}
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                    <!-- 补仓提醒 -->
                     <div style="background:#131a2b;border-radius:8px;padding:10px;border-left:3px solid #f39c12">
-                        <div style="font-size:11px;color:#f39c12;font-weight:600;margin-bottom:6px">📥 下一个补仓位</div>
+                        <div style="font-size:11px;color:#f39c12;font-weight:600;margin-bottom:6px">📥 计划补仓位</div>
                         <div style="font-size:18px;font-weight:800;color:#fff">$${nextAdd.price.toLocaleString()}</div>
-                        <div style="font-size:10px;color:#8892b0;margin-top:2px">${nextAdd.name} · 仓位${nextAdd.pct}% · 距离${nextAdd.dist.toFixed(2)}%</div>
-                        ${nextAdd.dist<0.5?'<div style="margin-top:4px;font-size:10px;color:#2ecc71;font-weight:600">✅ 已到补仓位，可以加仓</div>':''}
+                        <div style="font-size:10px;color:#8892b0;margin-top:2px">${nextAdd.name} · 仓位${nextAdd.pct}%</div>
                     </div>
-                    <!-- 平仓提醒 -->
                     <div style="background:#131a2b;border-radius:8px;padding:10px;border-left:3px solid #2ecc71">
-                        <div style="font-size:11px;color:#2ecc71;font-weight:600;margin-bottom:6px">💰 下一个止盈位</div>
+                        <div style="font-size:11px;color:#2ecc71;font-weight:600;margin-bottom:6px">💰 计划止盈位</div>
                         <div style="font-size:18px;font-weight:800;color:#fff">$${tp.tp1.toLocaleString()}</div>
-                        <div style="font-size:10px;color:#8892b0;margin-top:2px">TP1 · 平30% · 止损$${tp.stop_loss.toLocaleString()}</div>
+                        <div style="font-size:10px;color:#8892b0;margin-top:2px">TP1 · 止损$${tp.stop_loss.toLocaleString()}</div>
                     </div>
                 </div>
                 <div style="margin-top:8px;font-size:10px;color:#525f7a;text-align:center">
-                    ⏰ 持仓${ts.max_holding_bars}根K线(${ts.max_holding_hours}h)未达TP1建议平仓
+                    点"已下单"开始实时监控
                 </div>
             `;
         }
