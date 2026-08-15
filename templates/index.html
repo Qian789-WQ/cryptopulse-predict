@@ -958,7 +958,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         function renderOrders(){
             const orders=getOrders();
             const el=document.getElementById('orderList');
-            if(orders.length===0){el.innerHTML='<div style="text-align:center;color:#525f7a;padding:20px">暂无下单记录，点交易计划卡的"已下单"按钮记录</div>';return}
+            if(orders.length===0){
+                el.innerHTML='<div style="text-align:center;color:#525f7a;padding:30px 20px"><div style="font-size:30px;margin-bottom:10px">📋</div><div style="font-size:13px;margin-bottom:4px">暂无下单记录</div><div style="font-size:11px">点交易计划卡的"✓ 已下单"按钮记录交易</div></div>';
+                return;
+            }
             const openOrders=orders.filter(o=>o.status==='open');
             const closedOrders=orders.filter(o=>o.status==='closed');
             const wins=closedOrders.filter(o=>o.pnl>0);
@@ -1350,9 +1353,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     </div>
                     <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
                 `;
-                // 渲染独立的分批入场/时间止损卡片
-                renderPyramidCard(d);
             }
+            
+            // 渲染补仓/平仓提醒卡片（总是调用）
+            renderPyramidCard(d);
             
             // 更新高级信号
             let advHtml='';
