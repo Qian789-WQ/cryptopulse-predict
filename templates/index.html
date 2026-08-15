@@ -513,6 +513,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 savePredictionResult(d);
                 currentData=d;
                 
+                // 渲染补仓/平仓提醒卡片
+                try{renderPyramidCard(d)}catch(e){console.log('renderPyramidCard error:',e)}
+                
                 // 检查价格提醒
                 checkPriceAlerts(d.current_price);
                 
@@ -1374,110 +1377,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     if(el)el.textContent=countdown;
                 }
             },1000);
-        }
-        
-        // 自动更新：更新完整数据但保持页面位置
-        async function autoUpdatePredict(){
-            isAutoUpdating=true;
-            const scrollPos=window.scrollY;
-            const symbol=selectedSymbol;
-            const timeframe=document.getElementById('timeframe').value;
-            
-            try{
-                const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
-                const data=await resp.json();
-                if(!data.error){
-                    currentData=data;
-                    // 静默更新数据，不显示loading，不滚动
-                    updatePageData(data);
-                }
-            }catch(e){}
-            
-            // 恢复滚动位置
-            window.scrollTo(0, scrollPos);
-            isAutoUpdating=false;
-        }
-        
-        // 静默更新页面数据（不改变显示状态）
-        function updatePageData(d){
-            try{
-                // 更新价格
-                const priceEl=document.getElementById('currentPrice');
-                if(priceEl){
-                    const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||d.current_price;
-                    priceEl.textContent='$'+d.current_price.toLocaleString();
-                    if(d.current_price>oldPrice)priceEl.style.color='#2ecc71';
-                    else if(d.current_price<oldPrice)priceEl.style.color='#e74c3c';
-                    setTimeout(()=>{priceEl.style.color=''},1000);
-                }
-                
-                // 更新评分
-                const scoreEl=document.getElementById('scoreVal');
-                if(scoreEl)scoreEl.textContent=d.score;
-                const signalEl=document.getElementById('signalVal');
-                if(signalEl){
-                    signalEl.textContent=d.signal;
-                    signalEl.style.color=d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
-                }
-                
-                // 更新指标
-                const rsiEl=document.getElementById('rsiVal');
-                if(rsiEl)rsiEl.textContent=d.rsi.toFixed(1);
-                const volEl=document.getElementById('volVal');
-                if(volEl)volEl.textContent=d.vol_ratio.toFixed(1)+'x';
-                const atrEl=document.getElementById('atrVal');
-                if(atrEl)atrEl.textContent='$'+d.atr.toFixed(2);
-                const adxEl=document.getElementById('adxVal');
-                if(adxEl)adxEl.textContent=d.adx.toFixed(1);
-                const momEl=document.getElementById('momVal');
-                if(momEl)momEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
-                const winEl=document.getElementById('winRateVal');
-                if(winEl)winEl.textContent=d.win_rate+'%';
-                const levEl=document.getElementById('levVal');
-                if(levEl)levEl.textContent=d.leverage.recommended_leverage+'x';
-                const fundEl=document.getElementById('fundVal');
-                if(fundEl)fundEl.textContent=d.funding_rate.rate+'%';
-                const fgEl=document.getElementById('fearGreedVal');
-                if(fgEl&&d.fear_greed)fgEl.textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
-                
-                // 更新趋势
-                const trendEl=document.getElementById('trendVal');
-                if(trendEl)trendEl.textContent=d.prediction.trend;
-                
-                // 更新预测列表
-                const predEl=document.getElementById('predList');
-                if(predEl&&d.prediction.predicted){
-                    predEl.innerHTML=d.prediction.predicted.map((p,i)=>{
-                        const ch=(p-d.current_price)/d.current_price*100;
-                        const c=ch>=0?'#2ecc71':'#e74c3c';
-                        return `<div class="pred-item"><span>T+${i+1}</span><div class="bar"><div class="bar-fill" style="width:${Math.min(Math.abs(ch)*10,100)}%;background:${c}"></div></div><span style="font-family:'Courier New',monospace">$${p.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><span class="${ch>=0?'green':'red'}" style="width:50px;text-align:right">${ch>=0?'+':''}${ch.toFixed(2)}%</span></div>`;
-                    }).join('');
-                }
-                
-                // 更新交易计划
-                const tp=d.trade_plan;
-                const planEl=document.getElementById('tradePlan');
-                if(planEl&&tp.direction!=='neutral'){
-                    planEl.innerHTML=`
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
-                            <div>方向: <strong style="color:${tp.direction==='long'?'#2ecc71':'#e74c3c'}">${tp.direction_text}</strong></div>
-                            <div>盈亏比: <strong>1:${tp.risk_reward}</strong></div>
-                            <div>入场: <strong>$${tp.entry.toFixed(2)}</strong></div>
-                            <div>止损: <strong style="color:#e74c3c">$${tp.stop_loss.toFixed(2)}</strong></div>
-                            <div>TP1(平${tp.tp1_close_pct}%): <strong style="color:#2ecc71">$${tp.tp1.toFixed(2)}</strong></div>
-                            <div>TP2(平${tp.tp2_close_pct}%): <strong style="color:#2ecc71">$${tp.tp2.toFixed(2)}</strong></div>
-                            <div>TP3(平${tp.tp3_close_pct}%): <strong style="color:#2ecc71">$${tp.tp3.toFixed(2)}</strong></div>
-                            <div>仓位: <strong>${tp.position_pct}%</strong></div>
-                        </div>
-                        <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
-                    `;
-                }
-                
-                // 更新补仓/平仓卡片
-                renderPyramidCard(d);
-            }catch(e){
-                console.log('updatePageData error:',e);
-            }
         }
         
         function autoUpdatePredict(){
