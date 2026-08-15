@@ -114,6 +114,7 @@
             <button class="btn-secondary" onclick="scanAll()">📊 扫描</button>
             <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
             <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
+            <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
             <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
         </div>
         
@@ -213,6 +214,11 @@
                 <div id="historyStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px"></div>
                 <div id="historyList" style="max-height:300px;overflow-y:auto"></div>
             </div>
+            <!-- 回测结果面板 -->
+            <div class="card" id="backtestPanel" style="display:none;margin-bottom:12px">
+                <div class="card-title">📊 历史回测结果</div>
+                <div id="backtestResult" style="font-size:12px"></div>
+            </div>
             <div class="price-card">
                 <div class="price-top">
                     <div>
@@ -234,7 +240,7 @@
                     <div class="ind-item"><div class="label">预估胜率</div><div class="value" id="winRateVal">--</div></div>
                     <div class="ind-item"><div class="label">建议杠杆</div><div class="value" id="levVal">--</div></div>
                     <div class="ind-item"><div class="label">资金费率</div><div class="value" id="fundVal">--</div></div>
-                    <div class="ind-item"><div class="label">5日动量</div><div class="value" id="momVal">--</div></div>
+                    <div class="ind-item"><div class="label">恐慌贪婪</div><div class="value" id="fearGreedVal">--</div></div>
                 </div>
             </div>
             <div class="grid">
@@ -254,7 +260,10 @@
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
             <div class="grid-2">
-                <div class="card"><div class="card-title">📋 交易计划</div><div id="tradePlan"></div>
+                <div class="card"><div class="card-title">📋 交易计划</div>
+                    <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
+                    <div id="multiTfConfirm" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
+                    <div id="tradePlan"></div>
                     <div id="trailingStop" style="margin-top:10px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
                     <div id="kellyPos" style="margin-top:6px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
                 </div>
@@ -371,6 +380,33 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 // 凯利仓位
                 const k=d.kelly;
                 document.getElementById('kellyPos').innerHTML=`<span class="gray">凯利仓位：</span>${k.note}`;
+                
+                // 信号强度
+                const ss=d.trade_plan;
+                const ssEl=document.getElementById('signalStrength');
+                if(ss.signal_strength&&ss.direction!=='neutral'){
+                    const colors={strong:'#2ecc71',medium:'#f39c12',weak:'#e67e22'};
+                    ssEl.style.display='block';
+                    ssEl.style.background=colors[ss.signal_strength]+'22';
+                    ssEl.style.color=colors[ss.signal_strength];
+                    ssEl.textContent=`${ss.strength_text} · 评分${d.score}分 · 建议仓位${ss.position_pct}%`;
+                }else{ssEl.style.display='none'}
+                
+                // 多周期确认
+                const mtfc=d.multi_tf_confirm;
+                const mtfcEl=document.getElementById('multiTfConfirm');
+                if(mtfc){
+                    mtfcEl.style.display='block';
+                    if(mtfc.confirmed){
+                        mtfcEl.style.background='rgba(46,204,113,0.1)';
+                        mtfcEl.style.color='#2ecc71';
+                        mtfcEl.textContent='✓ '+mtfc.reason;
+                    }else{
+                        mtfcEl.style.background='rgba(231,76,60,0.1)';
+                        mtfcEl.style.color='#e74c3c';
+                        mtfcEl.textContent='⚠️ '+mtfc.reason;
+                    }
+                }
                 
                 // 高级信号
                 const adv=[];
@@ -585,9 +621,44 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             try{
                 const resp=await fetch('/api/fear-greed');
                 const data=await resp.json();
-                // 可以在页面某个位置显示
-                console.log('恐慌贪婪指数:',data);
+                const el=document.getElementById('fearGreedVal');
+                if(el){
+                    el.textContent=data.value;
+                    let color='yellow';
+                    if(data.value>=75)color='green';
+                    else if(data.value>=55)color='#58d68d';
+                    else if(data.value<=25)color='red';
+                    else if(data.value<=45)color='#e67e22';
+                    el.style.color=color;
+                    el.title=data.classification;
+                }
             }catch(e){}
+        }
+        
+        // 运行回测
+        async function runBacktest(){
+            const panel=document.getElementById('backtestPanel');
+            const result=document.getElementById('backtestResult');
+            panel.style.display='block';
+            result.innerHTML='<div style="text-align:center;padding:20px;color:#525f7a">回测中，请稍候...</div>';
+            panel.scrollIntoView({behavior:'smooth'});
+            try{
+                const resp=await fetch(`/api/backtest?symbol=${selectedSymbol}&timeframe=${document.getElementById('timeframe').value}&days=30`);
+                const data=await resp.json();
+                if(data.error){result.innerHTML=`<div style="color:#e74c3c;text-align:center;padding:20px">回测失败: ${data.error}</div>`;return}
+                const pnlColor=data.total_pnl>=0?'green':'red';
+                result.innerHTML=`
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px">
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.total_trades}</div><div style="font-size:10px;color:#525f7a">总交易</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${data.win_rate>=50?'green':'red'}">${data.win_rate}%</div><div style="font-size:10px;color:#525f7a">胜率</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">${data.total_pnl>=0?'+':''}${data.total_pnl_pct}%</div><div style="font-size:10px;color:#525f7a">总收益</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#e74c3c">${data.max_drawdown}%</div><div style="font-size:10px;color:#525f7a">最大回撤</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
+                    </div>
+                    <div style="font-size:11px;color:#525f7a">回测周期: 近30天 · 初始资金$1000 · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                `;
+            }catch(e){result.innerHTML=`<div style="color:#e74c3c;text-align:center;padding:20px">回测失败: ${e.message}</div>`}
         }
         
         window.addEventListener('load',()=>{

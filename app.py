@@ -1159,6 +1159,7 @@ def api_predict():
             "fib_levels": calc_fibonacci_and_levels(df),
             "volume_anomaly": detect_volume_anomaly(df),
             "divergence": divergence,
+            "multi_tf_confirm": check_multi_tf_confirmation(symbol, timeframe),
             "fake_breakout": fake_breakout,
             "candlestick": patterns,
             "streak": streak,
@@ -1207,6 +1208,145 @@ def api_scan():
         
         results.sort(key=lambda x: x["score"], reverse=True)
         return jsonify({"count": len(results), "data": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def check_multi_tf_confirmation(symbol, timeframe):
+    """多周期确认：4H和1H必须同向"""
+    try:
+        # 获取4H和1H数据
+        df_4h, err1 = fetch_klines(symbol, "4H", 100)
+        df_1h, err2 = fetch_klines(symbol, "1H", 100)
+        
+        if err1 or err2 or df_4h is None or df_1h is None:
+            return {"confirmed": True, "reason": "数据不足，跳过确认"}
+        
+        df_4h = calc_indicators(df_4h)
+        df_1h = calc_indicators(df_1h)
+        
+        score_4h, _ = calc_signal_score(df_4h)
+        score_1h, _ = calc_signal_score(df_1h)
+        
+        # 判断方向
+        dir_4h = "bullish" if score_4h >= 55 else "bearish" if score_4h <= 45 else "neutral"
+        dir_1h = "bullish" if score_1h >= 55 else "bearish" if score_1h <= 45 else "neutral"
+        
+        if dir_4h == dir_1h and dir_4h != "neutral":
+            return {"confirmed": True, "reason": f"4H({score_4h}分)和1H({score_1h}分)同向{dir_4h}", "score_4h": score_4h, "score_1h": score_1h}
+        else:
+            return {"confirmed": False, "reason": f"4H({score_4h}分,{dir_4h})和1H({score_1h}分,{dir_1h})方向不一致，建议观望", "score_4h": score_4h, "score_1h": score_1h}
+    except Exception as e:
+        return {"confirmed": True, "reason": f"确认失败: {str(e)}"}
+
+
+@app.route("/api/backtest")
+def api_backtest():
+    """历史回测"""
+    try:
+        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
+        timeframe = request.args.get("timeframe", "1H")
+        days = int(request.args.get("days", 30))
+        
+        # 获取历史数据
+        limit = min(days * 24, 500) if timeframe == "1H" else 500
+        df, error = fetch_klines(symbol, timeframe, limit)
+        if error or df is None or len(df) < 100:
+            return jsonify({"error": "数据不足"})
+        
+        df = calc_indicators(df)
+        
+        # 回测参数
+        initial_balance = 1000
+        balance = initial_balance
+        trades = []
+        position = None
+        max_balance = initial_balance
+        max_drawdown = 0
+        
+        for i in range(50, len(df) - 5):
+            row = df.iloc[i]
+            score, _ = calc_signal_score(df.iloc[:i+1])
+            
+            # 开仓逻辑
+            if position is None:
+                if score >= 60:  # 做多
+                    entry = float(row["close"])
+                    atr = float(row["atr"])
+                    stop_loss = entry - atr * 1.0
+                    tp = entry + atr * 3.0
+                    position = {"side": "long", "entry": entry, "stop_loss": stop_loss, "tp": tp, "index": i}
+                elif score <= 40:  # 做空
+                    entry = float(row["close"])
+                    atr = float(row["atr"])
+                    stop_loss = entry + atr * 1.0
+                    tp = entry - atr * 3.0
+                    position = {"side": "short", "entry": entry, "stop_loss": stop_loss, "tp": tp, "index": i}
+            else:
+                # 检查止损止盈
+                current_price = float(row["close"])
+                high = float(row["high"])
+                low = float(row["low"])
+                
+                closed = False
+                pnl_pct = 0
+                
+                if position["side"] == "long":
+                    if low <= position["stop_loss"]:
+                        pnl_pct = (position["stop_loss"] - position["entry"]) / position["entry"]
+                        closed = True
+                    elif high >= position["tp"]:
+                        pnl_pct = (position["tp"] - position["entry"]) / position["entry"]
+                        closed = True
+                else:
+                    if high >= position["stop_loss"]:
+                        pnl_pct = (position["entry"] - position["stop_loss"]) / position["entry"]
+                        closed = True
+                    elif low <= position["tp"]:
+                        pnl_pct = (position["entry"] - position["tp"]) / position["entry"]
+                        closed = True
+                
+                if closed:
+                    # 用10%仓位
+                    trade_pnl = balance * 0.1 * pnl_pct * 10  # 10倍杠杆
+                    balance += trade_pnl
+                    trades.append({"side": position["side"], "entry": position["entry"], "exit": current_price, "pnl_pct": round(pnl_pct*100, 2), "pnl": round(trade_pnl, 2), "balance": round(balance, 2)})
+                    position = None
+                    
+                    if balance > max_balance:
+                        max_balance = balance
+                    drawdown = (max_balance - balance) / max_balance * 100
+                    if drawdown > max_drawdown:
+                        max_drawdown = drawdown
+        
+        wins = [t for t in trades if t["pnl"] > 0]
+        losses = [t for t in trades if t["pnl"] <= 0]
+        win_rate = len(wins) / len(trades) * 100 if trades else 0
+        total_pnl = balance - initial_balance
+        total_pnl_pct = total_pnl / initial_balance * 100
+        
+        avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
+        avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
+        profit_factor = abs(sum(t["pnl"] for t in wins) / sum(t["pnl"] for t in losses)) if losses and sum(t["pnl"] for t in losses) != 0 else 0
+        
+        return jsonify({
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "days": days,
+            "initial_balance": initial_balance,
+            "final_balance": round(balance, 2),
+            "total_pnl": round(total_pnl, 2),
+            "total_pnl_pct": round(total_pnl_pct, 2),
+            "total_trades": len(trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 1),
+            "max_drawdown": round(max_drawdown, 2),
+            "profit_factor": round(profit_factor, 2),
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "recent_trades": trades[-10:]
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
