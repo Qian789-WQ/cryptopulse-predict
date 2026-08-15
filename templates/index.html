@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoPulse · 加密货币价格预测</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#0b0e17;color:#e8edf5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;min-height:100vh}
+        .container{max-width:1200px;margin:0 auto;padding:20px}
+        header{text-align:center;padding:30px 0 20px}
+        .logo{font-size:32px;font-weight:800;background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+        .subtitle{color:#525f7a;font-size:14px}
+        .controls{display:flex;gap:12px;justify-content:center;align-items:center;margin:24px 0;flex-wrap:wrap}
+        .controls select,.controls button{padding:10px 16px;border-radius:8px;font-size:14px;outline:none;cursor:pointer}
+        .controls select{background:#131a2b;border:1px solid #1e2a45;color:#e8edf5}
+        .btn-predict{background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;font-weight:600;padding:10px 24px}
+        .btn-predict:disabled{opacity:0.5;cursor:not-allowed}
+        .loading{text-align:center;padding:60px;color:#525f7a;display:none}
+        .spinner{width:40px;height:40px;border:3px solid #1a2340;border-top-color:#667eea;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .result{display:none}
+        .price-card{background:linear-gradient(140deg,#121827,#0e1421);border:1px solid #1a2340;border-radius:16px;padding:24px;margin-bottom:20px;text-align:center}
+        .price-label{color:#525f7a;font-size:12px;margin-bottom:8px}
+        .price-value{font-size:42px;font-weight:800;font-family:'Courier New',monospace}
+        .price-change{font-size:18px;font-weight:600;margin-top:8px}
+        .green{color:#2ecc71}.red{color:#e74c3c}.gray{color:#8892b0}
+        .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
+        .card{background:linear-gradient(140deg,#121827,#0e1421);border:1px solid #1a2340;border-radius:12px;padding:20px}
+        .card-title{font-size:14px;font-weight:700;color:#8892b0;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+        .card-title::before{content:'';width:4px;height:16px;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:2px}
+        .score-circle{width:120px;height:120px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;position:relative}
+        .score-circle::before{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(var(--score-color) calc(var(--score)*1%),#1a2340 0)}
+        .score-circle::after{content:'';position:absolute;inset:10px;border-radius:50%;background:#0e1421}
+        .score-value{position:relative;z-index:1;font-size:32px;font-weight:800}
+        .score-label{text-align:center;font-size:18px;font-weight:700}
+        .signal-strong-bullish{color:#2ecc71}.signal-bullish{color:#58d68d}.signal-neutral{color:#f39c12}.signal-bearish{color:#e67e22}.signal-strong-bearish{color:#e74c3c}
+        .pred-list{display:grid;gap:8px}
+        .pred-item{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#131a2b;border-radius:6px}
+        .pred-item .bar{flex:1;height:4px;background:#1a2340;border-radius:2px;margin:0 12px;position:relative;overflow:hidden}
+        .pred-item .bar-fill{height:100%;border-radius:2px}
+        .reasons{display:grid;gap:6px}
+        .reason-item{padding:6px 10px;background:#131a2b;border-radius:6px;font-size:13px;display:flex;align-items:center;gap:8px}
+        .reason-item::before{content:'•';color:#667eea;font-weight:bold}
+        .sr-grid{display:grid;gap:8px}
+        .sr-item{display:flex;justify-content:space-between;padding:8px 12px;background:#131a2b;border-radius:6px;font-family:'Courier New',monospace}
+        .sr-item.resistance{border-left:3px solid #e74c3c}
+        .sr-item.support{border-left:3px solid #2ecc71}
+        .sr-item.pivot{border-left:3px solid #f39c12}
+        .advice{background:linear-gradient(135deg,rgba(102,126,234,0.1),rgba(118,75,162,0.1));border:1px solid rgba(102,126,234,0.3);border-radius:12px;padding:20px;margin-bottom:20px}
+        .advice-title{font-size:14px;font-weight:700;color:#667eea;margin-bottom:8px}
+        .advice-text{font-size:15px;line-height:1.6}
+        .stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:20px}
+        .stat-item{background:#131a2b;border-radius:8px;padding:12px;text-align:center}
+        .stat-label{color:#525f7a;font-size:11px;margin-bottom:4px}
+        .stat-value{font-size:16px;font-weight:700;font-family:'Courier New',monospace}
+        footer{text-align:center;padding:30px 0;color:#525f7a;font-size:12px}
+        .error{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:12px;padding:20px;text-align:center;color:#e74c3c;margin:20px 0;display:none}
+        @media(max-width:600px){
+            .price-value{font-size:32px}
+            .controls{flex-direction:column}
+            .controls select,.controls button{width:100%}
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">⚡ CryptoPulse</div>
+            <div class="subtitle">AI驱动的加密货币价格预测系统 · 多因子综合分析</div>
+        </header>
+
+        <div class="controls">
+            <select id="symbol">
+                {% for s in symbols %}
+                <option value="{{ s.id }}">{{ s.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="timeframe">
+                {% for t in timeframes %}
+                <option value="{{ t.id }}" {% if t.id == '1H' %}selected{% endif %}>{{ t.name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn-predict" id="predictBtn" onclick="predict()">🔮 开始预测</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>正在获取数据并分析...</div>
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="result" id="result">
+            <div class="price-card">
+                <div class="price-label" id="symbolLabel">BTC / USDT</div>
+                <div class="price-value" id="currentPrice">--</div>
+                <div class="price-change" id="priceChange">--</div>
+            </div>
+
+            <div class="stats-row">
+                <div class="stat-item">
+                    <div class="stat-label">RSI(14)</div>
+                    <div class="stat-value" id="rsiValue">--</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">成交量比</div>
+                    <div class="stat-value" id="volRatio">--</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">ATR(14)</div>
+                    <div class="stat-value" id="atrValue">--</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">K线数</div>
+                    <div class="stat-value" id="candlesCount">--</div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">综合评分</div>
+                    <div class="score-circle" id="scoreCircle" style="--score:50;--score-color:#f39c12">
+                        <div class="score-value" id="scoreValue">--</div>
+                    </div>
+                    <div class="score-label" id="signalLabel">--</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">未来5根K线预测</div>
+                    <div class="pred-list" id="predList"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">趋势分析</div>
+                    <div style="display:grid;gap:12px">
+                        <div style="display:flex;justify-content:space-between"><span class="gray">趋势方向</span><strong id="trendDir">--</strong></div>
+                        <div style="display:flex;justify-content:space-between"><span class="gray">价格斜率</span><strong id="slopeVal">--</strong></div>
+                        <div style="display:flex;justify-content:space-between"><span class="gray">5日动量</span><strong id="momentumVal">--</strong></div>
+                        <div style="display:flex;justify-content:space-between"><span class="gray">波动率</span><strong id="volatilityVal">--</strong></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">多因子分析</div>
+                    <div class="reasons" id="reasonsList"></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">支撑阻力位</div>
+                    <div class="sr-grid" id="srList"></div>
+                </div>
+            </div>
+
+            <div class="advice">
+                <div class="advice-title">💡 操作建议</div>
+                <div class="advice-text" id="adviceText">--</div>
+            </div>
+        </div>
+
+        <footer>
+            <p>⚠️ 本预测仅供参考，不构成投资建议。加密货币交易风险极高，请谨慎操作。</p>
+            <p style="margin-top:8px">数据来源：OKX · 预测模型：线性回归+多因子评分</p>
+        </footer>
+    </div>
+
+    <script>
+        async function predict(){
+            const symbol = document.getElementById('symbol').value;
+            const timeframe = document.getElementById('timeframe').value;
+            const btn = document.getElementById('predictBtn');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+            const error = document.getElementById('error');
+
+            btn.disabled = true;
+            loading.style.display = 'block';
+            result.style.display = 'none';
+            error.style.display = 'none';
+
+            try{
+                const resp = await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
+                const data = await resp.json();
+
+                if(data.error){
+                    error.textContent = '❌ ' + data.error;
+                    error.style.display = 'block';
+                    loading.style.display = 'none';
+                    btn.disabled = false;
+                    return;
+                }
+
+                // 填充数据
+                document.getElementById('symbolLabel').textContent = symbol.replace('-USDT-SWAP','') + ' / USDT';
+                document.getElementById('currentPrice').textContent = '$' + data.current_price.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+                
+                const changeEl = document.getElementById('priceChange');
+                changeEl.textContent = (data.pct_change >= 0 ? '+' : '') + data.pct_change.toFixed(2) + '%';
+                changeEl.className = 'price-change ' + (data.pct_change >= 0 ? 'green' : 'red');
+
+                document.getElementById('rsiValue').textContent = data.rsi.toFixed(1);
+                document.getElementById('volRatio').textContent = data.vol_ratio.toFixed(2) + 'x';
+                document.getElementById('atrValue').textContent = '$' + data.atr.toFixed(2);
+                document.getElementById('candlesCount').textContent = data.candles_count;
+
+                // 评分
+                const score = data.score;
+                const scoreCircle = document.getElementById('scoreCircle');
+                scoreCircle.style.setProperty('--score', score);
+                let scoreColor = '#f39c12';
+                if(score >= 70) scoreColor = '#2ecc71';
+                else if(score >= 55) scoreColor = '#58d68d';
+                else if(score >= 45) scoreColor = '#f39c12';
+                else if(score >= 30) scoreColor = '#e67e22';
+                else scoreColor = '#e74c3c';
+                scoreCircle.style.setProperty('--score-color', scoreColor);
+                document.getElementById('scoreValue').textContent = score;
+                
+                const signalLabel = document.getElementById('signalLabel');
+                signalLabel.textContent = data.signal;
+                signalLabel.className = 'score-label signal-' + data.signal_class;
+
+                // 预测列表
+                const predList = document.getElementById('predList');
+                const maxChange = Math.max(...data.prediction.predicted.map(p => Math.abs((p - data.current_price) / data.current_price * 100)));
+                predList.innerHTML = data.prediction.predicted.map((p, i) => {
+                    const change = (p - data.current_price) / data.current_price * 100;
+                    const barWidth = maxChange > 0 ? (Math.abs(change) / maxChange * 100) : 0;
+                    const color = change >= 0 ? '#2ecc71' : '#e74c3c';
+                    return `<div class="pred-item">
+                        <span>第${i+1}根</span>
+                        <div class="bar"><div class="bar-fill" style="width:${barWidth}%;background:${color}"></div></div>
+                        <span style="font-family:'Courier New',monospace">$${p.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                        <span class="${change >= 0 ? 'green' : 'red'}" style="width:60px;text-align:right">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>
+                    </div>`;
+                }).join('');
+
+                // 趋势分析
+                document.getElementById('trendDir').textContent = data.prediction.trend;
+                document.getElementById('trendDir').className = data.prediction.trend === '上涨' ? 'green' : 'red';
+                document.getElementById('slopeVal').textContent = data.prediction.slope.toFixed(4);
+                document.getElementById('momentumVal').textContent = (data.prediction.momentum >= 0 ? '+' : '') + data.prediction.momentum.toFixed(2) + '%';
+                document.getElementById('momentumVal').className = data.prediction.momentum >= 0 ? 'green' : 'red';
+                document.getElementById('volatilityVal').textContent = data.prediction.volatility.toFixed(2) + '%';
+
+                // 多因子
+                document.getElementById('reasonsList').innerHTML = data.reasons.map(r => 
+                    `<div class="reason-item">${r}</div>`
+                ).join('');
+
+                // 支撑阻力
+                const sr = data.support_resistance;
+                document.getElementById('srList').innerHTML = `
+                    <div class="sr-item resistance"><span>阻力2</span><span>$${sr.r2.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                    <div class="sr-item resistance"><span>阻力1</span><span>$${sr.r1.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                    <div class="sr-item pivot"><span>枢轴点</span><span>$${sr.pivot.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                    <div class="sr-item support"><span>支撑1</span><span>$${sr.s1.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                    <div class="sr-item support"><span>支撑2</span><span>$${sr.s2.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+                `;
+
+                // 操作建议
+                document.getElementById('adviceText').textContent = data.advice;
+
+                result.style.display = 'block';
+            }catch(e){
+                error.textContent = '❌ 请求失败: ' + e.message;
+                error.style.display = 'block';
+            }finally{
+                loading.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        // 页面加载后自动预测一次
+        window.addEventListener('load', () => predict());
+    </script>
+</body>
+</html>
