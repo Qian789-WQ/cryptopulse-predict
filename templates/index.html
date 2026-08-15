@@ -134,6 +134,9 @@
                 </div>
                 <div class="indicators-grid">
                     <div class="ind-item"><div class="label">ATR波动</div><div class="value" id="atrVal">--</div></div>
+                    <div class="ind-item"><div class="label">ADX趋势</div><div class="value" id="adxVal">--</div></div>
+                    <div class="ind-item"><div class="label">预估胜率</div><div class="value" id="winRateVal">--</div></div>
+                    <div class="ind-item"><div class="label">建议杠杆</div><div class="value" id="levVal">--</div></div>
                     <div class="ind-item"><div class="label">资金费率</div><div class="value" id="fundVal">--</div></div>
                     <div class="ind-item"><div class="label">5日动量</div><div class="value" id="momVal">--</div></div>
                 </div>
@@ -155,7 +158,10 @@
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
             <div class="grid-2">
-                <div class="card"><div class="card-title">📋 交易计划</div><div id="tradePlan"></div></div>
+                <div class="card"><div class="card-title">📋 交易计划</div><div id="tradePlan"></div>
+                    <div id="trailingStop" style="margin-top:10px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
+                    <div id="kellyPos" style="margin-top:6px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
+                </div>
                 <div class="card"><div class="card-title">📈 趋势持仓</div>
                     <div style="display:grid;gap:8px">
                         <div style="display:flex;justify-content:space-between"><span class="gray">趋势</span><strong id="trendVal">--</strong></div>
@@ -170,6 +176,7 @@
             </div>
             <div class="grid">
                 <div class="card"><div class="card-title">多因子信号</div><div class="reasons" id="reasonsList"></div></div>
+                <div class="card"><div class="card-title">⚠️ 高级信号</div><div id="advancedSignals" style="font-size:11px"></div></div>
                 <div class="card"><div class="card-title">支撑阻力 & 斐波那契</div><div class="sr-grid" id="srList"></div></div>
                 <div class="card"><div class="card-title">成交量监控</div><div id="volumeBox"></div></div>
             </div>
@@ -247,6 +254,30 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 document.getElementById('srList').innerHTML=`<div class="sr-item resistance"><span>前高</span><span>$${fib.prev_high.toLocaleString()}</span></div><div class="sr-item resistance"><span>阻力2</span><span>$${sr.r2.toLocaleString()}</span></div><div class="sr-item resistance"><span>阻力1</span><span>$${sr.r1.toLocaleString()}</span></div><div class="sr-item pivot"><span>枢轴</span><span>$${sr.pivot.toLocaleString()}</span></div><div class="sr-item fib"><span>斐波0.5</span><span>$${fib.fibonacci['0.5'].toLocaleString()}</span></div><div class="sr-item fib"><span>斐波0.618</span><span>$${fib.fibonacci['0.618'].toLocaleString()}</span></div><div class="sr-item support"><span>支撑1</span><span>$${sr.s1.toLocaleString()}</span></div><div class="sr-item support"><span>支撑2</span><span>$${sr.s2.toLocaleString()}</span></div><div class="sr-item support"><span>前低</span><span>$${fib.prev_low.toLocaleString()}</span></div>`;
                 const va=d.volume_anomaly;
                 document.getElementById('volumeBox').innerHTML=va.has_anomaly?va.anomalies.map(a=>`<div class="anomaly-item">${a.text}</div>`).join(''):`<div style="text-align:center;color:#525f7a;padding:10px;font-size:11px">成交量正常<br>量比 ${va.vol_ratio}</div>`;
+                
+                // ADX和胜率
+                document.getElementById('adxVal').textContent=d.adx.toFixed(0);
+                document.getElementById('adxVal').className='value '+(d.adx>=30?'green':d.adx<20?'yellow':'');
+                document.getElementById('winRateVal').textContent=d.win_rate+'%';
+                document.getElementById('winRateVal').className='value '+(d.win_rate>=55?'green':d.win_rate<=45?'red':'yellow');
+                document.getElementById('levVal').textContent=d.leverage.recommended_leverage+'x';
+                
+                // 移动止损
+                const ts=d.trailing_stop;
+                document.getElementById('trailingStop').innerHTML=`<span class="gray">移动止损：</span>${ts.note} <span class="${ts.stage==='entry'?'red':'green'}">止损 $${ts.stop_loss.toLocaleString()}</span>`;
+                
+                // 凯利仓位
+                const k=d.kelly;
+                document.getElementById('kellyPos').innerHTML=`<span class="gray">凯利仓位：</span>${k.note}`;
+                
+                // 高级信号
+                const adv=[];
+                if(d.divergence.has_divergence){d.divergence.divergences.forEach(x=>adv.push(`<div class="anomaly-item">${x.text}</div>`))}
+                if(d.fake_breakout.is_fake){adv.push(`<div class="anomaly-item">${d.fake_breakout.text}</div>`)}
+                if(d.candlestick.count>0){d.candlestick.patterns.forEach(p=>adv.push(`<div class="anomaly-item" style="border-left-color:${p.type==='bullish'?'#2ecc71':p.type==='bearish'?'#e74c3c':'#f39c12'}">${p.name}：${p.text}</div>`))}
+                if(d.streak.has_warning){adv.push(`<div class="anomaly-item">${d.streak.warning}</div>`)}
+                if(d.time_filter.is_bad_time){adv.push(`<div class="anomaly-item" style="border-left-color:#e74c3c">⏰ ${d.time_filter.reason}</div>`)}
+                document.getElementById('advancedSignals').innerHTML=adv.length?adv.join(''):`<div style="text-align:center;color:#525f7a;padding:10px">无特殊信号</div>`;
                 document.getElementById('adviceText').textContent=d.advice;
                 rs.style.display='block';
             }catch(e){er.textContent='❌ 请求失败: '+e.message;er.style.display='block'}

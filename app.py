@@ -365,12 +365,36 @@ def calc_indicators(df):
     tp = (high + low + close) / 3
     df["cci"] = (tp - tp.rolling(20).mean()) / (0.015 * tp.rolling(20).std())
     
-    # 填充NaN为默认值
+    # ADX趋势强度
+    plus_dm = (high - high.shift()).where((high - high.shift()) > (low.shift() - low), 0)
+    minus_dm = (low.shift() - low).where((low.shift() - low) > (high - high.shift()), 0)
+    atr14 = tr.rolling(14).mean()
+    plus_di = 100 * (plus_dm.rolling(14).mean() / atr14)
+    minus_di = 100 * (minus_dm.rolling(14).mean() / atr14)
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    df["adx"] = dx.rolling(14).mean()
+    df["plus_di"] = plus_di
+    df["minus_di"] = minus_di
+    
+    # K线实体和影线
+    df["body"] = abs(close - df["open"])
+    df["upper_wick"] = high - df[["open", "close"]].max(axis=1)
+    df["lower_wick"] = df[["open", "close"]].min(axis=1) - low
+    df["is_bullish"] = close > df["open"]
+    
+    # 连涨连跌
+    df["consecutive"] = (df["pct_change"] > 0).astype(int).groupby((df["pct_change"] <= 0).cumsum()).cumsum()
+    df["consecutive_down"] = (df["pct_change"] < 0).astype(int).groupby((df["pct_change"] >= 0).cumsum()).cumsum()
+    
+    # 填充NaN
     df["kdj_k"] = df["kdj_k"].fillna(50)
     df["kdj_d"] = df["kdj_d"].fillna(50)
     df["kdj_j"] = df["kdj_j"].fillna(50)
     df["willr"] = df["willr"].fillna(-50)
     df["cci"] = df["cci"].fillna(0)
+    df["adx"] = df["adx"].fillna(20)
+    df["plus_di"] = df["plus_di"].fillna(20)
+    df["minus_di"] = df["minus_di"].fillna(20)
     
     return df
 
@@ -869,6 +893,173 @@ def detect_volume_anomaly(df):
         "recent_low": float(low)
     }
 
+def detect_divergence(df):
+    """检测RSI/MACD顶背离和底背离"""
+    divergences = []
+    if len(df) < 30:
+        return {"has_divergence": False, "divergences": divergences, "bullish_count": 0, "bearish_count": 0}
+    recent = df.tail(30)
+    prices = recent["close"].values
+    rsi = recent["rsi"].values
+    macd = recent["macd"].values
+    price_highs, rsi_highs = [], []
+    for i in range(2, len(prices)-2):
+        if prices[i] > prices[i-1] and prices[i] > prices[i+1] and prices[i] > prices[i-2] and prices[i] > prices[i+2]:
+            price_highs.append((i, prices[i]))
+            rsi_highs.append((i, rsi[i]))
+    price_lows, rsi_lows = [], []
+    for i in range(2, len(prices)-2):
+        if prices[i] < prices[i-1] and prices[i] < prices[i+1] and prices[i] < prices[i-2] and prices[i] < prices[i+2]:
+            price_lows.append((i, prices[i]))
+            rsi_lows.append((i, rsi[i]))
+    if len(price_highs) >= 2 and len(rsi_highs) >= 2:
+        if price_highs[-1][1] > price_highs[-2][1] and rsi_highs[-1][1] < rsi_highs[-2][1]:
+            divergences.append({"type": "bearish", "indicator": "RSI", "text": "⚠️ RSI顶背离：价格创新高但RSI走低，看跌信号"})
+    if len(price_lows) >= 2 and len(rsi_lows) >= 2:
+        if price_lows[-1][1] < price_lows[-2][1] and rsi_lows[-1][1] > rsi_lows[-2][1]:
+            divergences.append({"type": "bullish", "indicator": "RSI", "text": "⚠️ RSI底背离：价格创新低但RSI走高，看涨信号"})
+    macd_highs = []
+    for i in range(2, len(macd)-2):
+        if macd[i] > macd[i-1] and macd[i] > macd[i+1]:
+            macd_highs.append((i, macd[i]))
+    if len(price_highs) >= 2 and len(macd_highs) >= 2:
+        if price_highs[-1][1] > price_highs[-2][1] and macd_highs[-1][1] < macd_highs[-2][1]:
+            divergences.append({"type": "bearish", "indicator": "MACD", "text": "⚠️ MACD顶背离：看跌信号"})
+    return {"has_divergence": len(divergences) > 0, "divergences": divergences,
+            "bullish_count": sum(1 for d in divergences if d["type"] == "bullish"),
+            "bearish_count": sum(1 for d in divergences if d["type"] == "bearish")}
+
+def detect_fake_breakout(df):
+    """检测假突破"""
+    if len(df) < 20:
+        return {"is_fake": False, "type": None, "text": "数据不足"}
+    recent = df.tail(20)
+    latest = df.iloc[-1]
+    prev_high = recent["high"].iloc[:-1].max()
+    prev_low = recent["low"].iloc[:-1].min()
+    if latest["high"] > prev_high and latest["close"] < prev_high and latest["vol_ratio"] < 1.2:
+        return {"is_fake": True, "type": "bull_trap", "text": "⚠️ 假突破（诱多）：刺破前高但收盘回落，量能不足"}
+    if latest["low"] < prev_low and latest["close"] > prev_low and latest["vol_ratio"] < 1.2:
+        return {"is_fake": True, "type": "bear_trap", "text": "⚠️ 假突破（诱空）：跌破前低但收盘回升，量能不足"}
+    return {"is_fake": False, "type": None, "text": "无假突破信号"}
+
+def detect_candlestick_patterns(df):
+    """识别K线形态"""
+    patterns = []
+    if len(df) < 3:
+        return {"patterns": patterns, "count": 0}
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    body = latest["body"]
+    avg_body = df["body"].tail(10).mean()
+    upper_wick = latest["upper_wick"]
+    lower_wick = latest["lower_wick"]
+    if not prev["is_bullish"] and latest["is_bullish"] and latest["close"] >= prev["open"] and latest["open"] <= prev["close"] and body > avg_body:
+        patterns.append({"type": "bullish", "name": "看涨吞没", "text": "看涨吞没形态，反转信号"})
+    if prev["is_bullish"] and not latest["is_bullish"] and latest["open"] >= prev["close"] and latest["close"] <= prev["open"] and body > avg_body:
+        patterns.append({"type": "bearish", "name": "看跌吞没", "text": "看跌吞没形态，反转信号"})
+    if body < avg_body * 0.3 and upper_wick > body * 2 and lower_wick > body * 2:
+        patterns.append({"type": "neutral", "name": "十字星", "text": "十字星，犹豫信号，可能反转"})
+    if lower_wick > body * 2 and upper_wick < body * 0.5 and latest["is_bullish"]:
+        patterns.append({"type": "bullish", "name": "锤子线", "text": "锤子线，底部反转信号"})
+    if upper_wick > body * 2 and lower_wick < body * 0.5 and not latest["is_bullish"]:
+        patterns.append({"type": "bearish", "name": "射击之星", "text": "射击之星，顶部反转信号"})
+    return {"patterns": patterns, "count": len(patterns)}
+
+def get_consecutive_streak(df):
+    """连涨连跌统计"""
+    latest = df.iloc[-1]
+    up_streak = int(latest["consecutive"])
+    down_streak = int(latest["consecutive_down"])
+    warning = None
+    if up_streak >= 5:
+        warning = f"⚠️ 连涨{up_streak}根，警惕回调"
+    elif down_streak >= 5:
+        warning = f"⚠️ 连跌{down_streak}根，关注反弹"
+    return {"up_streak": up_streak, "down_streak": down_streak, "warning": warning, "has_warning": warning is not None}
+
+def check_time_filter():
+    """时间过滤"""
+    now = datetime.utcnow()
+    weekday = now.weekday()
+    hour = now.hour
+    is_weekend = weekday >= 5
+    is_low_vol = (hour >= 21 or hour < 6)
+    if is_weekend:
+        return {"is_bad_time": True, "reason": "周末流动性低，建议观望", "level": "high"}
+    elif is_low_vol:
+        return {"is_bad_time": True, "reason": "亚洲深夜低波动时段，建议观望", "level": "medium"}
+    return {"is_bad_time": False, "reason": "交易时段正常", "level": "low"}
+
+def calc_dynamic_leverage(atr, current_price, adx):
+    """动态杠杆建议"""
+    atr_pct = atr / current_price * 100
+    if atr_pct > 4:
+        base_leverage = 5
+    elif atr_pct > 2.5:
+        base_leverage = 10
+    elif atr_pct > 1.5:
+        base_leverage = 20
+    else:
+        base_leverage = 30
+    if adx > 30:
+        base_leverage = min(base_leverage * 1.3, 50)
+    elif adx < 20:
+        base_leverage = base_leverage * 0.7
+    return {"recommended_leverage": round(base_leverage), "atr_pct": round(atr_pct, 2),
+            "adx": round(float(adx), 1), "note": f"波动率{atr_pct:.1f}% + ADX{adx:.0f}，建议{round(base_leverage)}倍杠杆"}
+
+def calc_trailing_stop(plan, current_price):
+    """移动止损规则"""
+    if plan["direction"] == "neutral":
+        return {"stage": "none", "stop_loss": plan["stop_loss"], "note": "观望中"}
+    entry = plan["entry"]
+    sl = plan["stop_loss"]
+    tp1 = plan["tp1"]
+    tp2 = plan["tp2"]
+    if plan["direction"] == "long":
+        if current_price >= tp2:
+            return {"stage": "tp2", "stop_loss": tp1, "note": "已到TP2，止损上移到TP1，锁定利润"}
+        elif current_price >= tp1:
+            return {"stage": "tp1", "stop_loss": entry, "note": "已到TP1，止损移到入场价，保本交易"}
+        return {"stage": "entry", "stop_loss": sl, "note": "未到TP1，保持初始止损"}
+    else:
+        if current_price <= tp2:
+            return {"stage": "tp2", "stop_loss": tp1, "note": "已到TP2，止损下移到TP1，锁定利润"}
+        elif current_price <= tp1:
+            return {"stage": "tp1", "stop_loss": entry, "note": "已到TP1，止损移到入场价，保本交易"}
+        return {"stage": "entry", "stop_loss": sl, "note": "未到TP1，保持初始止损"}
+
+def estimate_win_rate(score, adx, has_divergence, fake_breakout, streak):
+    """估算胜率"""
+    base_rate = 50
+    if score >= 70: base_rate += 15
+    elif score >= 60: base_rate += 10
+    elif score >= 55: base_rate += 5
+    elif score <= 30: base_rate -= 15
+    elif score <= 40: base_rate -= 10
+    elif score <= 45: base_rate -= 5
+    if adx > 30: base_rate += 8
+    elif adx < 20: base_rate -= 5
+    if has_divergence: base_rate -= 10
+    if fake_breakout: base_rate -= 8
+    if streak >= 5: base_rate -= 5
+    return round(max(20, min(80, base_rate)))
+
+def calc_kelly_position(win_rate, risk_reward, account_size=1000):
+    """凯利公式仓位"""
+    p = win_rate / 100
+    q = 1 - p
+    b = risk_reward
+    if b <= 0:
+        return {"kelly_pct": 0, "half_kelly_pct": 0, "position_size": 0, "note": "盈亏比无效"}
+    kelly = max(0, min((b * p - q) / b, 0.5))
+    half_kelly = kelly * 0.5
+    return {"kelly_pct": round(kelly * 100, 1), "half_kelly_pct": round(half_kelly * 100, 1),
+            "position_size": round(account_size * half_kelly, 2),
+            "note": f"凯利公式建议仓位{half_kelly*100:.1f}%（半凯利，更保守）"}
+
+
 @app.route("/")
 def index():
     return render_template("index.html", symbols=SYMBOLS, timeframes=TIMEFRAMES)
@@ -910,6 +1101,18 @@ def api_predict():
         ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
         tp = calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol)
         
+        # 新增交易员级分析
+        divergence = detect_divergence(df)
+        fake_breakout = detect_fake_breakout(df)
+        patterns = detect_candlestick_patterns(df)
+        streak = get_consecutive_streak(df)
+        time_filter = check_time_filter()
+        adx_val = float(latest["adx"])
+        leverage = calc_dynamic_leverage(float(latest["atr"]), float(latest["close"]), adx_val)
+        trailing_stop = calc_trailing_stop(tp, float(latest["close"]))
+        win_rate = estimate_win_rate(score, adx_val, divergence["has_divergence"], fake_breakout["is_fake"], streak["up_streak"] if score >= 50 else streak["down_streak"])
+        kelly = calc_kelly_position(win_rate, tp["risk_reward"])
+        
         # 趋势判断
         trend = pred.get("trend", "震荡")
         trend_note = ""
@@ -918,12 +1121,19 @@ def api_predict():
         elif trend == "震荡" and score <= 45:
             trend_note = "（趋势震荡，轻仓试空）"
         
+        # ADX趋势强度提示
+        adx_note = ""
+        if adx_val < 20:
+            adx_note = f"ADX={adx_val:.0f}震荡市，"
+        elif adx_val > 30:
+            adx_note = f"ADX={adx_val:.0f}强趋势，"
+        
         if tp["direction"] == "long":
-            advice = f"可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，第一目标 ${tp['tp1']:,.2f}（+3%），第二目标 ${tp['tp2']:,.2f}（+4%），建议持仓 {ht['min_text']}~{ht['max_text']}"
+            advice = f"{adx_note}可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（+3%平30%），TP2 ${tp['tp2']:,.2f}（+4%平30%），TP3 ${tp['tp3']:,.2f}（+5%平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，预估胜率{win_rate}%"
         elif tp["direction"] == "short":
-            advice = f"可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，第一目标 ${tp['tp1']:,.2f}（-3%），第二目标 ${tp['tp2']:,.2f}（-4%），建议持仓 {ht['min_text']}~{ht['max_text']}"
+            advice = f"{adx_note}可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（-3%平30%），TP2 ${tp['tp2']:,.2f}（-4%平30%），TP3 ${tp['tp3']:,.2f}（-5%平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，预估胜率{win_rate}%"
         else:
-            advice = f"信号不明确，趋势{trend}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
+            advice = f"信号不明确，趋势{trend}，ADX={adx_val:.0f}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
         
         return jsonify({
             "symbol": symbol,
@@ -948,6 +1158,16 @@ def api_predict():
             "funding_rate": get_funding_rate(symbol),
             "fib_levels": calc_fibonacci_and_levels(df),
             "volume_anomaly": detect_volume_anomaly(df),
+            "divergence": divergence,
+            "fake_breakout": fake_breakout,
+            "candlestick": patterns,
+            "streak": streak,
+            "time_filter": time_filter,
+            "adx": adx_val,
+            "leverage": leverage,
+            "trailing_stop": trailing_stop,
+            "win_rate": win_rate,
+            "kelly": kelly,
             "advice": advice,
             "timestamp": datetime.now().isoformat(),
             "candles_count": len(df)
