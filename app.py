@@ -594,11 +594,11 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
             "message": "信号不明确，建议观望"
         }
     
-    # ATR止损倍数
-    atr_sl_mult = 1.5
-    atr_tp1_mult = 2.0  # 1:1.33
-    atr_tp2_mult = 3.0  # 1:2
-    atr_tp3_mult = 4.5  # 1:3
+    # ATR止损倍数（盈亏比1:3到1:5）
+    atr_sl_mult = 1.0
+    atr_tp1_mult = 3.0  # 1:3
+    atr_tp2_mult = 4.0  # 1:4
+    atr_tp3_mult = 5.0  # 1:5
     
     if direction == "long":
         entry = current_price
