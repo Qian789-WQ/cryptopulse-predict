@@ -86,14 +86,37 @@
         footer{text-align:center;padding:20px 0;color:#525f7a;font-size:10px;line-height:1.6}
         .error{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:12px;padding:14px;text-align:center;color:#e74c3c;margin:12px 0;display:none;font-size:12px}
         .refresh-tip{text-align:center;font-size:10px;color:#525f7a;margin-top:8px}
-        @media(max-width:600px){
+        @media(max-width:768px){
             .container{padding:10px}
-            .price-value{font-size:26px}
-            .controls{flex-direction:column}
-            .controls select,.controls button{width:100%}
+            .price-value{font-size:24px}
+            .controls{flex-direction:column;gap:8px}
+            .controls select,.controls button{width:100%;padding:10px;font-size:14px}
             .multi-tf{grid-template-columns:repeat(2,1fr)}
             .indicators-grid{grid-template-columns:repeat(2,1fr)}
             .grid-2{grid-template-columns:1fr}
+            /* 三列布局改单列 */
+            [style*="grid-template-columns:1fr 1fr 1fr"]{grid-template-columns:1fr !important}
+            /* 历史统计四列改两列 */
+            [style*="grid-template-columns:repeat(4,1fr)"]{grid-template-columns:repeat(2,1fr) !important}
+            /* 卡片优化 */
+            .card{padding:12px}
+            .card-title{font-size:13px}
+            /* 交易计划TP网格 */
+            .tp-grid{grid-template-columns:repeat(2,1fr)}
+            /* 按钮优化 */
+            .btn-primary,.btn-secondary{padding:10px 16px;font-size:13px}
+            /* 标题优化 */
+            h1{font-size:20px}
+            .subtitle{font-size:11px}
+            /* 回测面板 */
+            [style*="display:flex;gap:8px"]{flex-wrap:wrap}
+            /* 登录页 */
+            .login-box{padding:24px;margin:10px}
+        }
+        @media(max-width:400px){
+            .price-value{font-size:20px}
+            .indicators-grid{grid-template-columns:1fr}
+            .tp-grid{grid-template-columns:1fr}
         }
     </style>
 </head>
