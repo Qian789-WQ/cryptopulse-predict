@@ -329,85 +329,92 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
 
 def analyze_multi_timeframe(symbol, current_timeframe):
     """多周期共振分析：同时分析多个周期的趋势"""
-    # 要分析的周期
-    timeframes = ["15m", "1H", "4H", "1D"]
-    results = {}
-    
-    for tf in timeframes:
-        df, error = fetch_klines(symbol, tf, 200)
-        if error or df is None or len(df) < 50:
-            results[tf] = {"trend": "unknown", "score": 50, "error": error or "数据不足"}
-            continue
+    try:
+        timeframes = ["15m", "1H", "4H", "1D"]
+        results = {}
         
-        df = calc_indicators(df)
-        latest = df.iloc[-1]
-        
-        # 简单趋势判断
-        trend_score = 50
-        if latest["ma7"] > latest["ma21"] > latest["ma50"]:
-            trend = "上涨"
-            trend_score = 75
-        elif latest["ma7"] < latest["ma21"] < latest["ma50"]:
-            trend = "下跌"
-            trend_score = 25
-        elif latest["ma7"] > latest["ma21"]:
-            trend = "偏多"
-            trend_score = 60
-        elif latest["ma7"] < latest["ma21"]:
-            trend = "偏空"
-            trend_score = 40
-        else:
-            trend = "震荡"
+        for tf in timeframes:
+            df, error = fetch_klines(symbol, tf, 200)
+            if error or df is None or len(df) < 50:
+                results[tf] = {"trend": "未知", "score": 50, "error": error or "数据不足"}
+                continue
+            
+            df = calc_indicators(df)
+            latest = df.iloc[-1]
+            
             trend_score = 50
+            if latest["ma7"] > latest["ma21"] > latest["ma50"]:
+                trend = "上涨"
+                trend_score = 75
+            elif latest["ma7"] < latest["ma21"] < latest["ma50"]:
+                trend = "下跌"
+                trend_score = 25
+            elif latest["ma7"] > latest["ma21"]:
+                trend = "偏多"
+                trend_score = 60
+            elif latest["ma7"] < latest["ma21"]:
+                trend = "偏空"
+                trend_score = 40
+            else:
+                trend = "震荡"
+                trend_score = 50
+            
+            rsi = latest["rsi"]
+            if rsi > 70:
+                trend_score -= 10
+            elif rsi < 30:
+                trend_score += 10
+            
+            trend_score = max(0, min(100, trend_score))
+            results[tf] = {
+                "trend": trend,
+                "score": trend_score,
+                "rsi": round(float(rsi), 1),
+                "price": round(float(latest["close"]), 2)
+            }
         
-        # RSI辅助判断
-        rsi = latest["rsi"]
-        if rsi > 70:
-            trend_score -= 10
-        elif rsi < 30:
-            trend_score += 10
+        scores = [results[tf]["score"] for tf in timeframes if "score" in results[tf]]
+        avg_score = sum(scores) / len(scores) if scores else 50
         
-        trend_score = max(0, min(100, trend_score))
-        results[tf] = {
-            "trend": trend,
-            "score": trend_score,
-            "rsi": round(float(rsi), 1),
-            "price": round(float(latest["close"]), 2)
+        bullish_count = sum(1 for s in scores if s >= 55)
+        bearish_count = sum(1 for s in scores if s <= 45)
+        
+        if bullish_count >= 3:
+            resonance = "强烈多头共振"
+            resonance_level = 3
+        elif bullish_count >= 2:
+            resonance = "多头共振"
+            resonance_level = 2
+        elif bearish_count >= 3:
+            resonance = "强烈空头共振"
+            resonance_level = -3
+        elif bearish_count >= 2:
+            resonance = "空头共振"
+            resonance_level = -2
+        else:
+            resonance = "无明显共振"
+            resonance_level = 0
+        
+        return {
+            "timeframes": results,
+            "avg_score": round(avg_score, 1),
+            "resonance": resonance,
+            "resonance_level": resonance_level,
+            "bullish_count": bullish_count,
+            "bearish_count": bearish_count,
+            "current_timeframe": current_timeframe
         }
-    
-    # 计算共振程度
-    scores = [results[tf]["score"] for tf in timeframes if "score" in results[tf]]
-    avg_score = sum(scores) / len(scores) if scores else 50
-    
-    # 判断共振方向
-    bullish_count = sum(1 for s in scores if s >= 55)
-    bearish_count = sum(1 for s in scores if s <= 45)
-    
-    if bullish_count >= 3:
-        resonance = "强烈多头共振"
-        resonance_level = 3
-    elif bullish_count >= 2:
-        resonance = "多头共振"
-        resonance_level = 2
-    elif bearish_count >= 3:
-        resonance = "强烈空头共振"
-        resonance_level = -3
-    elif bearish_count >= 2:
-        resonance = "空头共振"
-        resonance_level = -2
-    else:
-        resonance = "无明显共振"
-        resonance_level = 0
-    
-    return {
-        "timeframes": results,
-        "avg_score": round(avg_score, 1),
-        "resonance": resonance,
-        "resonance_level": resonance_level,
-        "bullish_count": bullish_count,
-        "bearish_count": bearish_count,
-        "current_timeframe": current_timeframe
-    }
+    except Exception as e:
+        return {
+            "timeframes": {},
+            "avg_score": 50,
+            "resonance": "分析失败",
+            "resonance_level": 0,
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "current_timeframe": current_timeframe,
+            "error": str(e)
+        }
 
 
 def get_funding_rate(symbol):
@@ -528,79 +535,73 @@ def index():
 
 @app.route("/api/predict")
 def api_predict():
-    symbol = request.args.get("symbol", "BTC-USDT-SWAP")
-    timeframe = request.args.get("timeframe", "1H")
-    
-    # 获取数据
-    df, error = fetch_klines(symbol, timeframe, 500)
-    if error:
-        return jsonify({"error": f"获取数据失败: {error}"}), 500
-    if df is None or len(df) < 100:
-        return jsonify({"error": "数据不足"}), 500
-    
-    # 计算指标
-    df = calc_indicators(df)
-    latest = df.iloc[-1]
-    
-    # 预测
-    pred = predict_price(df, periods=5)
-    
-    # 评分
-    score, reasons = calc_signal_score(df)
-    
-    # 支撑阻力
-    sr = calc_support_resistance(df)
-    
-    # 信号
-    if score >= 70:
-        signal = "强烈看涨"
-        signal_class = "strong-bullish"
-    elif score >= 55:
-        signal = "偏多"
-        signal_class = "bullish"
-    elif score >= 45:
-        signal = "中性观望"
-        signal_class = "neutral"
-    elif score >= 30:
-        signal = "偏空"
-        signal_class = "bearish"
-    else:
-        signal = "强烈看空"
-        signal_class = "strong-bearish"
-    
-    # 操作建议
-    ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
-    if score >= 60:
-        advice = f"可考虑做多，止损设在 ${sr['s1']:,.2f}，第一目标 ${sr['r1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
-    elif score <= 40:
-        advice = f"可考虑做空，止损设在 ${sr['r1']:,.2f}，第一目标 ${sr['s1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
-    else:
-        advice = f"信号不明确，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
-    
-    return jsonify({
-        "symbol": symbol,
-        "timeframe": timeframe,
-        "current_price": float(latest["close"]),
-        "pct_change": float(latest["pct_change"]),
-        "vol_ratio": float(latest["vol_ratio"]),
-        "rsi": float(latest["rsi"]),
-        "atr": float(latest["atr"]),
-        "prediction": pred,
-        "score": score,
-        "signal": signal,
-        "signal_class": signal_class,
-        "reasons": reasons,
-        "support_resistance": sr,
-        "holding_time": calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"])),
-        "trade_plan": calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol),
-        "multi_tf": analyze_multi_timeframe(symbol, timeframe),
-        "funding_rate": get_funding_rate(symbol),
-        "fib_levels": calc_fibonacci_and_levels(df),
-        "volume_anomaly": detect_volume_anomaly(df),
-        "advice": advice,
-        "timestamp": datetime.now().isoformat(),
-        "candles_count": len(df)
-    })
+    try:
+        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
+        timeframe = request.args.get("timeframe", "1H")
+        
+        df, error = fetch_klines(symbol, timeframe, 500)
+        if error:
+            return jsonify({"error": f"获取数据失败: {error}"}), 500
+        if df is None or len(df) < 100:
+            return jsonify({"error": "数据不足"}), 500
+        
+        df = calc_indicators(df)
+        latest = df.iloc[-1]
+        pred = predict_price(df, periods=5)
+        score, reasons = calc_signal_score(df)
+        sr = calc_support_resistance(df)
+        
+        if score >= 70:
+            signal = "强烈看涨"
+            signal_class = "strong-bullish"
+        elif score >= 55:
+            signal = "偏多"
+            signal_class = "bullish"
+        elif score >= 45:
+            signal = "中性观望"
+            signal_class = "neutral"
+        elif score >= 30:
+            signal = "偏空"
+            signal_class = "bearish"
+        else:
+            signal = "强烈看空"
+            signal_class = "strong-bearish"
+        
+        ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
+        if score >= 60:
+            advice = f"可考虑做多，止损设在 ${sr['s1']:,.2f}，第一目标 ${sr['r1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
+        elif score <= 40:
+            advice = f"可考虑做空，止损设在 ${sr['r1']:,.2f}，第一目标 ${sr['s1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
+        else:
+            advice = f"信号不明确，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
+        
+        return jsonify({
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "current_price": float(latest["close"]),
+            "pct_change": float(latest["pct_change"]),
+            "vol_ratio": float(latest["vol_ratio"]),
+            "rsi": float(latest["rsi"]),
+            "atr": float(latest["atr"]),
+            "prediction": pred,
+            "score": score,
+            "signal": signal,
+            "signal_class": signal_class,
+            "reasons": reasons,
+            "support_resistance": sr,
+            "holding_time": ht,
+            "trade_plan": calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol),
+            "multi_tf": analyze_multi_timeframe(symbol, timeframe),
+            "funding_rate": get_funding_rate(symbol),
+            "fib_levels": calc_fibonacci_and_levels(df),
+            "volume_anomaly": detect_volume_anomaly(df),
+            "advice": advice,
+            "timestamp": datetime.now().isoformat(),
+            "candles_count": len(df)
+        })
+    except Exception as e:
+        return jsonify({"error": f"服务器错误: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
