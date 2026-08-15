@@ -1060,7 +1060,37 @@ def calc_kelly_position(win_rate, risk_reward, account_size=1000):
             "note": f"凯利公式建议仓位{half_kelly*100:.1f}%（半凯利，更保守）"}
 
 
+def login_required(f):
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login_page"))
+        return f(*args, **kwargs)
+    wrapper.__name__ = f.__name__
+    return wrapper
+
+@app.route("/login")
+def login_page():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+    return render_template("login.html")
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json()
+    password = data.get("password", "")
+    if password == ACCESS_PASSWORD:
+        session["logged_in"] = True
+        session.permanent = True
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "密码错误"})
+
+@app.route("/api/logout")
+def api_logout():
+    session.clear()
+    return jsonify({"success": True})
+
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html", symbols=SYMBOLS, timeframes=TIMEFRAMES)
 
