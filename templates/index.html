@@ -803,7 +803,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             document.getElementById('placeOrderBtn').textContent='✓ 已记录';
             document.getElementById('placeOrderBtn').style.background='#525f7a';
             setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='✓ 已下单';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
-            alert('下单记录已保存！可在历史记录→下单记录中查看');
+            // 自动打开历史面板并切换到下单记录
+            document.getElementById('historyPanel').style.display='block';
+            switchHistoryTab('orders');
+            // 滚动到历史面板
+            document.getElementById('historyPanel').scrollIntoView({behavior:'smooth',block:'start'});
         }
         
         function switchHistoryTab(tab){
