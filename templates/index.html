@@ -766,25 +766,61 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             if(tab==='orders')renderOrders();
         }
         
+        // 实时价格缓存
+        let livePrices={};
+        
+        async function updateLivePrices(){
+            const orders=getOrders();
+            const openOrders=orders.filter(o=>o.status==='open');
+            if(openOrders.length===0)return;
+            // 获取每个持仓币种的实时价格
+            for(const order of openOrders){
+                try{
+                    const resp=await fetch(`/api/predict?symbol=${order.symbol}&timeframe=1m`);
+                    const data=await resp.json();
+                    if(!data.error){
+                        livePrices[order.symbol]=data.current_price;
+                    }
+                }catch(e){}
+            }
+            // 如果当前在下单记录tab，重新渲染
+            if(currentHistoryTab==='orders'&&document.getElementById('historyPanel').style.display!=='none'){
+                renderOrders();
+            }
+        }
+        
         function renderOrders(){
             const orders=getOrders();
             const el=document.getElementById('orderList');
             if(orders.length===0){el.innerHTML='<div style="text-align:center;color:#525f7a;padding:20px">暂无下单记录，点交易计划卡的"已下单"按钮记录</div>';return}
-            // 统计
             const openOrders=orders.filter(o=>o.status==='open');
             const closedOrders=orders.filter(o=>o.status==='closed');
             const wins=closedOrders.filter(o=>o.pnl>0);
             const totalPnl=closedOrders.reduce((s,o)=>s+(o.pnl||0),0);
+            // 计算浮动盈亏
+            let floatingPnl=0;
+            openOrders.forEach(o=>{
+                const price=livePrices[o.symbol]||o.entry;
+                const pnlPct=o.direction==='long'?(price-o.entry)/o.entry*100:(o.entry-price)/o.entry*100;
+                floatingPnl+=pnlPct/100*1000*o.position_pct/100*o.leverage;
+            });
             const winRate=closedOrders.length?wins.length/closedOrders.length*100:0;
             document.getElementById('historyStats').innerHTML=`
                 <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${orders.length}</div><div style="font-size:10px;color:#525f7a">总下单</div></div>
                 <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#f39c12">${openOrders.length}</div><div style="font-size:10px;color:#525f7a">持仓中</div></div>
-                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${winRate>=50?'#2ecc71':'#e74c3c'}">${winRate.toFixed(0)}%</div><div style="font-size:10px;color:#525f7a">平仓胜率</div></div>
-                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${totalPnl>=0?'#2ecc71':'#e74c3c'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(0)}</div><div style="font-size:10px;color:#525f7a">累计盈亏</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${floatingPnl>=0?'#2ecc71':'#e74c3c'}">${floatingPnl>=0?'+':''}${floatingPnl.toFixed(1)}</div><div style="font-size:10px;color:#525f7a">浮动盈亏</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${totalPnl>=0?'#2ecc71':'#e74c3c'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(0)}</div><div style="font-size:10px;color:#525f7a">已平仓盈亏</div></div>
             `;
             el.innerHTML=orders.map(o=>{
                 const color=o.direction==='long'?'#2ecc71':'#e74c3c';
                 const statusColor=o.status==='open'?'#f39c12':o.pnl>0?'#2ecc71':'#e74c3c';
+                // 计算浮动盈亏
+                let floatPnl=0,floatPnlPct=0,currentPrice=o.entry;
+                if(o.status==='open'){
+                    currentPrice=livePrices[o.symbol]||o.entry;
+                    floatPnlPct=o.direction==='long'?(currentPrice-o.entry)/o.entry*100:(o.entry-currentPrice)/o.entry*100;
+                    floatPnl=floatPnlPct/100*1000*o.position_pct/100*o.leverage;
+                }
                 return `<div style="padding:10px;background:#131a2b;border-radius:6px;margin-bottom:6px;border-left:3px solid ${color}">
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                         <span style="font-weight:700">${o.symbol.replace('-USDT-SWAP','')} ${o.timeframe} <span style="color:${color}">${o.direction_text}</span></span>
@@ -800,6 +836,12 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <span>RSI: ${o.rsi.toFixed(0)} ADX: ${o.adx.toFixed(0)}</span>
                         <span>杠杆: ${o.leverage}x 仓位: ${o.position_pct}%</span>
                     </div>
+                    ${o.status==='open'?`<div style="margin-top:6px;padding:6px 8px;background:${floatPnl>=0?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)'};border-radius:5px">
+                        <div style="display:flex;justify-content:space-between;font-size:11px">
+                            <span>现价: <strong>$${currentPrice.toLocaleString()}</strong></span>
+                            <span style="color:${floatPnl>=0?'#2ecc71':'#e74c3c'};font-weight:700">浮动: ${floatPnl>=0?'+':''}${floatPnl.toFixed(2)} USDT (${floatPnlPct>=0?'+':''}${floatPnlPct.toFixed(2)}%)</span>
+                        </div>
+                    </div>`:''}
                     <div style="font-size:10px;color:#525f7a;margin-top:4px">${o.time_str} · ${o.reasons.slice(0,2).join(' · ')}</div>
                     ${o.status==='open'?`<div style="margin-top:6px"><button onclick="closeOrder(${o.id})" style="padding:4px 10px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">✗ 平仓</button> <button onclick="viewOrderDetail(${o.id})" style="padding:4px 10px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer;margin-left:6px">📋 详情</button></div>`:`<div style="margin-top:6px;font-size:11px"><span style="color:${o.pnl>=0?'#2ecc71':'#e74c3c'}">盈亏: ${o.pnl>=0?'+':''}${o.pnl} USDT (${o.pnl_pct>=0?'+':''}${o.pnl_pct}%)</span> <span style="color:#525f7a;margin-left:8px">平仓价: $${o.close_price}</span> <button onclick="viewOrderDetail(${o.id})" style="padding:3px 8px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;margin-left:6px">详情</button></div>`}
                 </div>`;
@@ -930,6 +972,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             renderAlerts();
             loadFearGreed();
             loadBacktestResult();
+            // 每30秒更新持仓实时价格
+            setInterval(updateLivePrices, 30000);
+            // 立即更新一次
+            setTimeout(updateLivePrices, 2000);
             const savedKey=getWechatKey();
             if(savedKey){document.getElementById('wechatKey').value=savedKey;document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 微信推送已启用</span>'}
             // 每30秒检查价格提醒
