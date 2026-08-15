@@ -1082,6 +1082,7 @@ def api_price():
         return jsonify({"error": str(e)})
 
 @app.route("/api/predict")
+@login_required
 def api_predict():
     try:
         symbol = request.args.get("symbol", "BTC-USDT-SWAP")

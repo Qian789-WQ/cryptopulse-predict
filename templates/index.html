@@ -1250,6 +1250,13 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             if(countdownTimer)clearInterval(countdownTimer);
         }
         
+        async function logout(){
+            if(confirm('确定退出登录？')){
+                await fetch('/api/logout');
+                window.location.href='/login';
+            }
+        }
+        
         window.addEventListener('load',()=>{
             document.getElementById('symbolSearch').value = allSymbols[0].name;
             predict();
