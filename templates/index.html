@@ -104,7 +104,11 @@
             <div class="subtitle">AI预测 · 多因子分析 · 交易计划 · 11项技术指标</div>
         </header>
         <div class="controls">
-            <select id="symbol">{% for s in symbols %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+            <div style="position:relative;flex:1;min-width:160px">
+                <input type="text" id="symbolSearch" placeholder="搜索币种..." style="width:100%;padding:10px 12px;border-radius:10px;font-size:13px;background:#131a2b;border:1px solid #1e2a45;color:#e8edf5;outline:none" oninput="filterSymbols()" onfocus="showDropdown()" onblur="setTimeout(hideDropdown,200)">
+                <div id="symbolDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#131a2b;border:1px solid #1e2a45;border-radius:0 0 10px 10px;max-height:300px;overflow-y:auto;z-index:1000"></div>
+                <select id="symbol" style="display:none">{% for s in symbols %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+            </div>
             <select id="timeframe">{% for t in timeframes %}<option value="{{ t.id }}" {% if t.id == '1H' %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select>
             <button class="btn-primary" id="predictBtn" onclick="predict()">🔮 预测</button>
             <button class="btn-secondary" onclick="scanAll()">📊 扫描</button>
@@ -176,11 +180,29 @@
         <footer><p>⚠️ 加密货币交易风险极高，请谨慎操作</p><p>数据来源：OKX · 模型：加权回归+多因子评分 · 11项技术指标</p></footer>
     </div>
     <script>
+        const allSymbols = [{% for s in symbols %}{"id":"{{ s.id }}","name":"{{ s.name }}"},{% endfor %}];
+        let selectedSymbol = allSymbols[0].id;
+        
+        function filterSymbols(){
+            const q = document.getElementById('symbolSearch').value.toLowerCase();
+            const dd = document.getElementById('symbolDropdown');
+            const filtered = allSymbols.filter(s => s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q));
+            dd.innerHTML = filtered.slice(0,50).map(s => `<div style="padding:8px 12px;cursor:pointer;font-size:13px" onmousedown="selectSymbol('${s.id}','${s.name}')">${s.name}</div>`).join('') || '<div style="padding:12px;color:#525f7a;font-size:12px">无匹配结果</div>';
+            dd.style.display = 'block';
+        }
+        function showDropdown(){filterSymbols()}
+        function hideDropdown(){document.getElementById('symbolDropdown').style.display='none'}
+        function selectSymbol(id,name){
+            selectedSymbol = id;
+            document.getElementById('symbolSearch').value = name;
+            document.getElementById('symbol').value = id;
+            hideDropdown();
+        }
         function getHistory(){try{return JSON.parse(localStorage.getItem('cp_history')||'[]')}catch(e){return[]}}
         function saveHistory(r){const h=getHistory();h.push({...r,t:Date.now()});if(h.length>50)h.shift();localStorage.setItem('cp_history',JSON.stringify(h))}
         function checkLoss(){const h=getHistory(),r=h.slice(-5);let l=0;for(let i=r.length-1;i>=0;i--){if(r[i].s<45)l++;else break}if(l>=3){const a=document.getElementById('lossAlert');a.textContent=`⚠️ 连续${l}次看空，建议暂停交易`;a.style.display='block'}}
         async function predict(){
-            const sym=document.getElementById('symbol').value,tf=document.getElementById('timeframe').value;
+            const sym=selectedSymbol,tf=document.getElementById('timeframe').value;
             const btn=document.getElementById('predictBtn'),ld=document.getElementById('loading'),rs=document.getElementById('result'),er=document.getElementById('error');
             btn.disabled=true;ld.style.display='block';rs.style.display='none';er.style.display='none';document.getElementById('lossAlert').style.display='none';
             try{
@@ -236,7 +258,10 @@
             sr.innerHTML=res.map(r=>{const c=r.score>=55?'#2ecc71':r.score<=45?'#e74c3c':'#f39c12';return `<div class="scan-item"><span>${r.s.replace('-USDT-SWAP','')} <span class="gray" style="font-size:10px">$${r.price.toLocaleString()}</span></span><span><span class="score-badge" style="background:${c}22;color:${c}">${r.score}分</span> <span class="${r.ch>=0?'green':'red'}" style="margin-left:6px">${r.ch>=0?'+':''}${r.ch.toFixed(2)}%</span></span></div>`}).join('');
         }
         function requestNotify(){if('Notification' in window){Notification.requestPermission().then(p=>{if(p==='granted')new Notification('CryptoPulse',{body:'提醒已开启'})})}}
-        window.addEventListener('load',()=>predict());
+        window.addEventListener('load',()=>{
+            document.getElementById('symbolSearch').value = allSymbols[0].name;
+            predict();
+        });
     </script>
 </body>
 </html>
