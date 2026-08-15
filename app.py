@@ -1064,6 +1064,23 @@ def calc_kelly_position(win_rate, risk_reward, account_size=1000):
 def index():
     return render_template("index.html", symbols=SYMBOLS, timeframes=TIMEFRAMES)
 
+@app.route("/api/price")
+def api_price():
+    """轻量级：只返回当前价格，不计算指标"""
+    try:
+        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
+        df, error = fetch_klines(symbol, "1m", 2)
+        if error or df is None or len(df) == 0:
+            return jsonify({"error": "获取价格失败"})
+        current_price = float(df.iloc[-1]["close"])
+        return jsonify({
+            "symbol": symbol,
+            "current_price": current_price,
+            "timestamp": int(time.time())
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route("/api/predict")
 def api_predict():
     try:

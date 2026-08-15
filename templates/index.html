@@ -115,10 +115,10 @@
             <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
             <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
             <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
-            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 自动30s</button>
+            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 价格30s</button>
             <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
         </div>
-        <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">下次自动更新: <span id="countdown">30</span>秒</div>
+        <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">价格自动刷新: <span id="countdown">30</span>秒后 (点预测更新完整数据)</div>
         
         <!-- 计算器面板 -->
         <div id="calculatorPanel" style="display:none;background:#121827;border:1px solid #1a2340;border-radius:12px;padding:14px;margin-bottom:12px">
@@ -792,7 +792,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             // 获取每个持仓币种的实时价格
             for(const order of openOrders){
                 try{
-                    const resp=await fetch(`/api/predict?symbol=${order.symbol}&timeframe=1m`);
+                    const resp=await fetch(`/api/price?symbol=${order.symbol}`);
                     const data=await resp.json();
                     if(!data.error){
                         livePrices[order.symbol]=data.current_price;
@@ -1096,7 +1096,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 cd.style.display='block';
                 startAutoUpdate();
             }else{
-                btn.textContent='⏸ 已暂停';
+                btn.textContent='⏸ 暂停';
                 btn.style.background='#525f7a';
                 cd.style.display='none';
                 stopAutoUpdate();
@@ -1108,7 +1108,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             countdown=30;
             autoUpdateTimer=setInterval(()=>{
                 if(autoUpdateEnabled){
-                    predict();
+                    updateCurrentPrice();
                     updateLivePrices();
                     countdown=30;
                 }
@@ -1121,6 +1121,34 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     if(el)el.textContent=countdown;
                 }
             },1000);
+        }
+        
+        // 只更新当前价格，不刷新其他内容
+        async function updateCurrentPrice(){
+            try{
+                const resp=await fetch(`/api/price?symbol=${selectedSymbol}`);
+                const data=await resp.json();
+                if(!data.error){
+                    // 更新价格卡的价格
+                    const priceEl=document.getElementById('currentPrice');
+                    if(priceEl){
+                        const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||data.current_price;
+                        priceEl.textContent='$'+data.current_price.toLocaleString();
+                        // 价格变化动画
+                        if(data.current_price>oldPrice){
+                            priceEl.style.color='#2ecc71';
+                        }else if(data.current_price<oldPrice){
+                            priceEl.style.color='#e74c3c';
+                        }
+                        setTimeout(()=>{priceEl.style.color=''},1000);
+                    }
+                    // 更新currentData中的价格
+                    if(currentData){
+                        currentData.current_price=data.current_price;
+                    }
+                    livePrices[selectedSymbol]=data.current_price;
+                }
+            }catch(e){}
         }
         
         function stopAutoUpdate(){
