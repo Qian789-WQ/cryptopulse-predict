@@ -115,8 +115,10 @@
             <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
             <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
             <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
+            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 自动30s</button>
             <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
         </div>
+        <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">下次自动更新: <span id="countdown">30</span>秒</div>
         
         <!-- 计算器面板 -->
         <div id="calculatorPanel" style="display:none;background:#121827;border:1px solid #1a2340;border-radius:12px;padding:14px;margin-bottom:12px">
@@ -966,22 +968,67 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             }
         }
         
+        // 自动更新
+        let autoUpdateEnabled=true;
+        let autoUpdateTimer=null;
+        let countdownTimer=null;
+        let countdown=30;
+        
+        function toggleAutoUpdate(){
+            autoUpdateEnabled=!autoUpdateEnabled;
+            const btn=document.getElementById('autoUpdateBtn');
+            const cd=document.getElementById('updateCountdown');
+            if(autoUpdateEnabled){
+                btn.textContent='🔄 自动30s';
+                btn.style.background='';
+                cd.style.display='block';
+                startAutoUpdate();
+            }else{
+                btn.textContent='⏸ 已暂停';
+                btn.style.background='#525f7a';
+                cd.style.display='none';
+                stopAutoUpdate();
+            }
+        }
+        
+        function startAutoUpdate(){
+            stopAutoUpdate();
+            countdown=30;
+            autoUpdateTimer=setInterval(()=>{
+                if(autoUpdateEnabled){
+                    predict();
+                    updateLivePrices();
+                    countdown=30;
+                }
+            },30000);
+            countdownTimer=setInterval(()=>{
+                if(autoUpdateEnabled){
+                    countdown--;
+                    if(countdown<0)countdown=30;
+                    const el=document.getElementById('countdown');
+                    if(el)el.textContent=countdown;
+                }
+            },1000);
+        }
+        
+        function stopAutoUpdate(){
+            if(autoUpdateTimer)clearInterval(autoUpdateTimer);
+            if(countdownTimer)clearInterval(countdownTimer);
+        }
+        
         window.addEventListener('load',()=>{
             document.getElementById('symbolSearch').value = allSymbols[0].name;
             predict();
             renderAlerts();
             loadFearGreed();
             loadBacktestResult();
-            // 每30秒更新持仓实时价格
-            setInterval(updateLivePrices, 30000);
-            // 立即更新一次
+            // 启动自动更新
+            document.getElementById('updateCountdown').style.display='block';
+            startAutoUpdate();
+            // 立即更新持仓价格
             setTimeout(updateLivePrices, 2000);
             const savedKey=getWechatKey();
             if(savedKey){document.getElementById('wechatKey').value=savedKey;document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 微信推送已启用</span>'}
-            // 每30秒检查价格提醒
-            setInterval(()=>{
-                if(currentData)checkPriceAlerts(currentData.current_price);
-            },30000);
         });
     </script>
 </body>
