@@ -286,6 +286,7 @@
             <div class="grid-2">
                 <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <span><button id="closeOrderBtn" onclick="quickCloseOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(231,76,60,0.3);margin-right:6px">✗ 平仓</button><button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">✓ 已下单</button></span></div>
                     <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
+                    <div id="confidenceBar" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="multiTfConfirm" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="tradePlan"></div>
                     <div id="trailingStop" style="margin-top:10px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
@@ -308,6 +309,7 @@
                 <div class="card"><div class="card-title">⚠️ 高级信号 <span id="monitorStatus" style="float:right;font-size:10px;color:#525f7a"></span></div><div id="advancedSignals" style="font-size:11px"></div>
                     <div id="orderAlerts" style="margin-top:8px"></div>
                 </div>
+                <div class="card"><div class="card-title">📅 重大事件提醒</div><div id="economicEvents" style="font-size:11px"></div></div>
                 <div class="card"><div class="card-title">支撑阻力 & 斐波那契</div><div class="sr-grid" id="srList"></div></div>
                 <div class="card"><div class="card-title">成交量监控</div><div id="volumeBox"></div></div>
             </div>
@@ -963,6 +965,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         </div>
                     </div>`:''}
                     <div style="font-size:10px;color:#525f7a;margin-top:4px">${o.time_str} · ${o.reasons.slice(0,2).join(' · ')}</div>
+                    ${o.tags&&o.tags.length>0?`<div style="margin-top:4px">${o.tags.map(t=>`<span style="display:inline-block;padding:2px 6px;background:#667eea33;color:#667eea;border-radius:8px;font-size:9px;margin-right:3px">${t}</span>`).join('')}</div>`:''}
+                    ${o.notes?`<div style="font-size:10px;color:#f39c12;margin-top:2px;font-style:italic">📝 ${o.notes.substring(0,30)}${o.notes.length>30?'...':''}</div>`:''}
                     ${o.status==='open'?`<div style="margin-top:6px"><button onclick="closeOrder(${o.id})" style="padding:4px 10px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:4px;color:#fff;font-size:11px;font-weight:600;cursor:pointer">✗ 平仓</button> <button onclick="viewOrderDetail(${o.id})" style="padding:4px 10px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:11px;cursor:pointer;margin-left:6px">📋 详情</button></div>`:`<div style="margin-top:6px;font-size:11px"><span style="color:${o.pnl>=0?'#2ecc71':'#e74c3c'}">盈亏: ${o.pnl>=0?'+':''}${o.pnl} USDT (${o.pnl_pct>=0?'+':''}${o.pnl_pct}%)</span> <span style="color:#525f7a;margin-left:8px">平仓价: $${o.close_price}</span> <button onclick="viewOrderDetail(${o.id})" style="padding:3px 8px;background:#525f7a;border:none;border-radius:4px;color:#fff;font-size:10px;cursor:pointer;margin-left:6px">详情</button></div>`}
                 </div>`;
             }).join('');
@@ -999,7 +1003,90 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const orders=getOrders();
             const o=orders.find(x=>x.id===id);
             if(!o)return;
-            alert(`交易详情\n\n币种: ${o.symbol}\n周期: ${o.timeframe}\n方向: ${o.direction_text}\n评分: ${o.score}分 (${o.strength_text})\n\n入场: $${o.entry}\n止损: $${o.stop_loss}\nTP1: $${o.tp1} (平${o.tp1_close_pct}%)\nTP2: $${o.tp2} (平${o.tp2_close_pct}%)\nTP3: $${o.tp3} (平${o.tp3_close_pct}%)\n\n仓位: ${o.position_pct}%\n杠杆: ${o.leverage}x\n预估胜率: ${o.win_rate}%\n凯利仓位: ${o.kelly_pct}%\n\nRSI: ${o.rsi.toFixed(1)}\nKDJ: K${o.kdj.k.toFixed(0)} D${o.kdj.d.toFixed(0)} J${o.kdj.j.toFixed(0)}\nCCI: ${o.cci.toFixed(0)}\nADX: ${o.adx.toFixed(1)}\nATR: $${o.atr}\n量比: ${o.vol_ratio}\n资金费率: ${o.funding_rate}%\n\n趋势: ${o.trend}\n动量: ${o.momentum}%\n波动率: ${o.volatility}%\n建议持仓: ${o.holding_time.min_text}~${o.holding_time.max_text}\n\n多周期: ${o.multi_tf.resonance}\n多周期确认: ${o.multi_tf_confirm.reason}\n背离: ${o.divergence.has_divergence?'有':'无'}\n假突破: ${o.fake_breakout.is_fake?o.fake_breakout.text:'无'}\nK线形态: ${o.candlestick.count>0?o.candlestick.patterns.map(p=>p.name).join(','):'无'}\n连涨: ${o.streak.up_streak} 连跌: ${o.streak.down_streak}\n\n信号原因:\n${o.reasons.join('\n')}\n\n操作建议:\n${o.advice}`);
+            // 打开笔记编辑弹窗
+            openNoteEditor(o);
+        }
+        
+        function openNoteEditor(order){
+            const existingNotes=order.notes||'';
+            const existingTags=order.tags||[];
+            const tagOptions=['追高','抄底','突破','回调','情绪化','FOMO','止损','止盈','系统信号','手动交易'];
+            
+            const modal=document.createElement('div');
+            modal.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+            modal.innerHTML=`
+                <div style="background:#141b2d;border:1px solid #2a3450;border-radius:12px;padding:20px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                        <h3 style="color:#fff;font-size:16px">📝 交易复盘 - ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}</h3>
+                        <button onclick="this.closest('div').parentElement.parentElement.remove()" style="background:none;border:none;color:#8892b0;font-size:20px;cursor:pointer">×</button>
+                    </div>
+                    <div style="font-size:11px;color:#8892b0;margin-bottom:12px">
+                        入场: $${order.entry} | 止损: $${order.stop_loss} | TP1: $${order.tp1}
+                        ${order.status==='closed'?`| 平仓: $${order.close_price} | 盈亏: ${order.pnl>=0?'+':''}${order.pnl} USDT`:''}
+                    </div>
+                    <div style="margin-bottom:12px">
+                        <div style="color:#8892b0;font-size:12px;margin-bottom:6px">标签（可多选）:</div>
+                        <div id="tagSelect" style="display:flex;flex-wrap:wrap;gap:6px">
+                            ${tagOptions.map(t=>`<span class="tag-option" data-tag="${t}" onclick="toggleTag(this)" style="padding:4px 10px;background:#1a2340;border-radius:15px;font-size:11px;cursor:pointer;color:#8892b0">${t}</span>`).join('')}
+                        </div>
+                    </div>
+                    <div style="margin-bottom:12px">
+                        <div style="color:#8892b0;font-size:12px;margin-bottom:6px">开仓理由:</div>
+                        <textarea id="openReason" style="width:100%;height:60px;background:#0e1421;border:1px solid #2a3450;border-radius:6px;color:#fff;padding:8px;font-size:12px;resize:vertical" placeholder="为什么开这单？">${order.open_reason||''}</textarea>
+                    </div>
+                    <div style="margin-bottom:12px">
+                        <div style="color:#8892b0;font-size:12px;margin-bottom:6px">平仓原因/复盘:</div>
+                        <textarea id="closeReason" style="width:100%;height:80px;background:#0e1421;border:1px solid #2a3450;border-radius:6px;color:#fff;padding:8px;font-size:12px;resize:vertical" placeholder="为什么平仓？有什么经验教训？">${order.close_reason||existingNotes}</textarea>
+                    </div>
+                    <div style="margin-bottom:16px">
+                        <div style="color:#8892b0;font-size:12px;margin-bottom:6px">心理状态:</div>
+                        <select id="psychState" style="width:100%;padding:8px;background:#0e1421;border:1px solid #2a3450;border-radius:6px;color:#fff;font-size:12px">
+                            <option value="">请选择</option>
+                            <option value="冷静" ${order.psych_state==='冷静'?'selected':''}>冷静理性</option>
+                            <option value="贪婪" ${order.psych_state==='贪婪'?'selected':''}>贪婪追高</option>
+                            <option value="恐惧" ${order.psych_state==='恐惧'?'selected':''}>恐惧割肉</option>
+                            <option value="FOMO" ${order.psych_state==='FOMO'?'selected':''}>FOMO踏空</option>
+                            <option value="报复" ${order.psych_state==='报复'?'selected':''}>报复性交易</option>
+                            <option value="犹豫" ${order.psych_state==='犹豫'?'selected':''}>犹豫错过</option>
+                        </select>
+                    </div>
+                    <button onclick="saveOrderNote(${order.id})" style="width:100%;padding:10px;background:linear-gradient(135deg,#667eea,#764ba2);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer">保存复盘</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            // 恢复已选标签
+            setTimeout(()=>{
+                existingTags.forEach(t=>{
+                    const el=modal.querySelector(`[data-tag="${t}"]`);
+                    if(el)toggleTag(el);
+                });
+            },100);
+        }
+        
+        function toggleTag(el){
+            if(el.style.background==='rgb(102, 126, 234)'){
+                el.style.background='#1a2340';
+                el.style.color='#8892b0';
+            }else{
+                el.style.background='#667eea';
+                el.style.color='#fff';
+            }
+        }
+        
+        function saveOrderNote(id){
+            const orders=getOrders();
+            const order=orders.find(o=>o.id===id);
+            if(!order)return;
+            const selectedTags=Array.from(document.querySelectorAll('.tag-option')).filter(el=>el.style.background==='rgb(102, 126, 234)').map(el=>el.dataset.tag);
+            order.tags=selectedTags;
+            order.open_reason=document.getElementById('openReason').value;
+            order.close_reason=document.getElementById('closeReason').value;
+            order.psych_state=document.getElementById('psychState').value;
+            order.notes=document.getElementById('closeReason').value;
+            saveOrders(orders);
+            document.querySelector('[style*="z-index:9999"]').remove();
+            renderOrders();
+            alert('复盘笔记已保存！');
         }
         
         function clearOrders(){
@@ -1276,6 +1363,59 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             if(countdownTimer)clearInterval(countdownTimer);
         }
         
+        // 重大经济事件数据
+        const economicEvents=[
+            {date:'每月第一个周五',event:'美国非农就业数据',impact:'高',note:'波动极大，建议空仓或轻仓'},
+            {date:'每月中旬',event:'美国CPI通胀数据',impact:'高',note:'影响美联储政策，波动大'},
+            {date:'每月下旬',event:'美联储利率决议',impact:'极高',note:'行情剧烈波动，强烈建议空仓'},
+            {date:'每季度',event:'美联储议息会议纪要',impact:'中',note:'可能引发短期波动'},
+            {date:'每月',event:'美国PCE物价指数',impact:'高',note:'美联储首选通胀指标'},
+            {date:'每周四',event:'美国初请失业金',impact:'中',note:'影响有限但需关注'},
+        ];
+        
+        function renderEconomicEvents(){
+            const el=document.getElementById('economicEvents');
+            const now=new Date();
+            const day=now.getDay();
+            const date=now.getDate();
+            
+            // 判断近期是否有重大事件
+            let upcomingEvents=[];
+            
+            // 非农：每月第一个周五
+            if(day===5 && date<=7){
+                upcomingEvents.push({...economicEvents[0],time:'今天',urgent:true});
+            }
+            // CPI：每月10-15日左右
+            if(date>=10 && date<=15){
+                upcomingEvents.push({...economicEvents[1],time:'本周',urgent:false});
+            }
+            // 利率决议：每月下旬（约20-28日）
+            if(date>=20 && date<=28){
+                upcomingEvents.push({...economicEvents[2],time:'本周',urgent:true});
+            }
+            // 初请失业金：每周四
+            if(day===4){
+                upcomingEvents.push({...economicEvents[5],time:'今天',urgent:false});
+            }
+            
+            if(upcomingEvents.length===0){
+                el.innerHTML='<div style="color:#525f7a;text-align:center;padding:8px">近期无重大事件</div>';
+                return;
+            }
+            
+            el.innerHTML=upcomingEvents.map(e=>{
+                const color=e.impact==='极高'?'#e74c3c':e.impact==='高'?'#f39c12':'#f1c40f';
+                return `<div style="padding:6px 8px;background:${color}15;border-left:3px solid ${color};border-radius:4px;margin-bottom:4px">
+                    <div style="display:flex;justify-content:space-between">
+                        <span style="color:${color};font-weight:700">${e.event}</span>
+                        <span style="color:#525f7a;font-size:10px">${e.time}</span>
+                    </div>
+                    <div style="font-size:10px;color:#8892b0;margin-top:2px">影响: ${e.impact} | ${e.note}</div>
+                </div>`;
+            }).join('');
+        }
+        
         async function logout(){
             if(confirm('确定退出登录？')){
                 await fetch('/api/logout');
@@ -1294,6 +1434,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             startAutoUpdate();
             // 启动WebSocket实时价格
             connectWebSocket();
+            // 渲染重大事件
+            renderEconomicEvents();
             // 立即更新持仓价格
             setTimeout(updateLivePrices, 2000);
             const savedKey=getWechatKey();
