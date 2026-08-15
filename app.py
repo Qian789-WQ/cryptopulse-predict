@@ -935,5 +935,40 @@ def api_predict():
         return jsonify({"error": f"服务器错误: {str(e)}"}), 500
 
 
+@app.route("/api/scan")
+def api_scan():
+    """批量扫描前N个币种"""
+    try:
+        limit = int(request.args.get("limit", 50))
+        timeframe = request.args.get("timeframe", "1H")
+        symbols = SYMBOLS[:limit]
+        
+        results = []
+        for s in symbols:
+            try:
+                df, error = fetch_klines(s["id"], timeframe, 200)
+                if error or df is None or len(df) < 100:
+                    continue
+                df = calc_indicators(df)
+                latest = df.iloc[-1]
+                score, _ = calc_signal_score(df)
+                results.append({
+                    "symbol": s["id"],
+                    "name": s["name"],
+                    "score": score,
+                    "price": round(float(latest["close"]), 2),
+                    "pct_change": round(float(latest["pct_change"]), 2),
+                    "rsi": round(float(latest["rsi"]), 1),
+                    "vol_ratio": round(float(latest["vol_ratio"]), 2)
+                })
+            except:
+                continue
+        
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return jsonify({"count": len(results), "data": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
