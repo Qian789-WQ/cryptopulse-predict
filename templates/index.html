@@ -112,10 +112,9 @@
             <select id="timeframe">{% for t in timeframes %}<option value="{{ t.id }}" {% if t.id == '1H' %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select>
             <button class="btn-primary" id="predictBtn" onclick="predict()">🔮 预测</button>
             <button class="btn-secondary" onclick="scanAll()">📊 扫描</button>
-            <button class="btn-secondary" onclick="toggleTools()">🧮 工具</button>
-            <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
-            <button class="btn-secondary" onclick="requestNotify()">🔔</button>
             <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
+            <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
+            <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
         </div>
         
         <!-- 计算器面板 -->
@@ -164,11 +163,6 @@
                     <button onclick="testWechat()" style="padding:6px 10px;background:#525f7a;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">测试</button>
                 </div>
                 <div id="wechatStatus" style="margin-top:6px;font-size:11px"></div>
-            </div>
-            <!-- 信号历史准确率 -->
-            <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1a2340">
-                <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">📊 预测历史准确率</div>
-                <div id="historyStats" style="font-size:11px;color:#525f7a">加载中...</div>
             </div>
         </div>
         <div class="loading" id="loading"><div class="spinner"></div><div>正在分析...</div></div>
@@ -424,6 +418,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         function toggleCalculator(){
             const p=document.getElementById('calculatorPanel');
             p.style.display=p.style.display==='none'?'block':'none';
+        }
+        function toggleHistory(){
+            const p=document.getElementById('historyPanel');
+            p.style.display=p.style.display==='none'?'block':'none';
             if(p.style.display==='block')loadHistoryStats();
         }
         
@@ -537,22 +535,21 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         }
         function loadHistoryStats(){
             const history=JSON.parse(localStorage.getItem('cp_predictions')||'[]');
-            // 验证旧预测（简单验证：预测方向和实际价格方向）
-            let verified=0,correct=0;
-            const now=Date.now();
-            history.forEach(h=>{
-                if(!h.verified&&now-h.time>3600000){ // 1小时后验证
-                    h.verified=true;
-                    // 这里简化处理，实际需要获取当前价格对比
-                }
-                if(h.verified)verified++;
-            });
-            localStorage.setItem('cp_predictions',JSON.stringify(history));
             const el=document.getElementById('historyStats');
+            const listEl=document.getElementById('historyList');
+            if(!el||!listEl)return;
             const bullish=history.filter(h=>h.score>=55).length;
             const bearish=history.filter(h=>h.score<=45).length;
             const neutral=history.length-bullish-bearish;
-            el.innerHTML=`总预测：${history.length}次 · 看涨${bullish}次 · 看跌${bearish}次 · 观望${neutral}次<br><span style="color:#525f7a">预测记录保存在本地，用于统计模型准确率</span>`;
+            const avgScore=history.length?Math.round(history.reduce((s,h)=>s+h.score,0)/history.length):0;
+            el.innerHTML=`<div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${history.length}</div><div style="font-size:10px;color:#525f7a">总预测</div></div><div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#2ecc71">${bullish}</div><div style="font-size:10px;color:#525f7a">看涨</div></div><div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#e74c3c">${bearish}</div><div style="font-size:10px;color:#525f7a">看跌</div></div><div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#f39c12">${avgScore}</div><div style="font-size:10px;color:#525f7a">平均分</div></div>`;
+            // 历史列表
+            listEl.innerHTML=history.slice(-20).reverse().map(h=>{
+                const d=new Date(h.time);
+                const timeStr=`${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+                const color=h.score>=55?'#2ecc71':h.score<=45?'#e74c3c':'#f39c12';
+                return `<div style="display:flex;justify-content:space-between;padding:6px 8px;background:#131a2b;border-radius:4px;margin-bottom:3px;font-size:11px"><span>${h.symbol.replace('-USDT-SWAP','')} ${h.timeframe}</span><span style="color:${color}">${h.score}分 ${h.signal}</span><span style="color:#525f7a">$${h.price.toLocaleString()}</span><span style="color:#525f7a">${timeStr}</span></div>`;
+            }).join('')||'<div style="text-align:center;color:#525f7a;padding:20px">暂无预测记录</div>';
         }
         
         // 微信推送
