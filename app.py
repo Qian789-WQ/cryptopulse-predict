@@ -1211,5 +1211,34 @@ def api_scan():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/fear-greed")
+def api_fear_greed():
+    """获取恐慌贪婪指数"""
+    try:
+        cache_key = "fear_greed"
+        cached = get_cache(cache_key)
+        if cached:
+            return jsonify(cached)
+        
+        resp = fetch_with_retry("https://api.alternative.me/fng/?limit=1", retries=2, timeout=8)
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            if data.get("data"):
+                item = data["data"][0]
+                value = int(item["value"])
+                classification = item["value_classification"]
+                result = {
+                    "value": value,
+                    "classification": classification,
+                    "timestamp": item.get("timestamp", ""),
+                    "note": f"恐慌贪婪指数：{value} ({classification})"
+                }
+                set_cache(cache_key, result)
+                return jsonify(result)
+        return jsonify({"value": 50, "classification": "Neutral", "note": "获取失败，默认中性"})
+    except Exception as e:
+        return jsonify({"value": 50, "classification": "Neutral", "note": f"获取失败: {str(e)}"})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
