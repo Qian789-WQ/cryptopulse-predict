@@ -138,6 +138,10 @@
                         <div style="display:flex;justify-content:space-between"><span class="gray">价格斜率</span><strong id="slopeVal">--</strong></div>
                         <div style="display:flex;justify-content:space-between"><span class="gray">5日动量</span><strong id="momentumVal">--</strong></div>
                         <div style="display:flex;justify-content:space-between"><span class="gray">波动率</span><strong id="volatilityVal">--</strong></div>
+                        <div style="border-top:1px solid #1a2340;padding-top:12px">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span class="gray">建议持仓</span><strong id="holdingTime" style="color:#667eea">--</strong></div>
+                            <div style="font-size:11px;color:#525f7a;line-height:1.5" id="holdingDetail">--</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -236,6 +240,11 @@
                         <span class="${change >= 0 ? 'green' : 'red'}" style="width:60px;text-align:right">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</span>
                     </div>`;
                 }).join('');
+
+                // 持仓时间
+                const ht = data.holding_time;
+                document.getElementById('holdingTime').textContent = ht.min_text + '~' + ht.max_text;
+                document.getElementById('holdingDetail').innerHTML = '平均' + ht.avg_text + ' · 波动系数' + ht.volatility_factor + ' · 趋势系数' + ht.trend_factor + '<br>ATR占比' + ht.atr_pct + '% · 斜率强度' + ht.slope_pct + '%';
 
                 // 趋势分析
                 document.getElementById('trendDir').textContent = data.prediction.trend;

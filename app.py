@@ -204,6 +204,68 @@ def calc_support_resistance(df):
     r2 = pivot + (high - low)
     s2 = pivot - (high - low)
     
+
+
+def calc_holding_time(timeframe, prediction, atr, current_price):
+    """计算建议持仓时间"""
+    # 周期对应的分钟数
+    tf_minutes = {
+        "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+        "1H": 60, "2H": 120, "4H": 240, "6H": 360, "12H": 720, "1D": 1440
+    }
+    tf_min = tf_minutes.get(timeframe, 60)
+    
+    # 基础持仓时间：预测5根K线的时间
+    base_minutes = tf_min * 5
+    
+    # 根据波动率调整（ATR占比）
+    atr_pct = atr / current_price * 100
+    if atr_pct > 3:  # 高波动，缩短持仓
+        volatility_factor = 0.6
+    elif atr_pct > 1.5:  # 中等波动
+        volatility_factor = 0.8
+    else:  # 低波动，可以持有更久
+        volatility_factor = 1.2
+    
+    # 根据趋势强度调整
+    slope = abs(prediction["slope"])
+    slope_pct = slope / current_price * 100
+    if slope_pct > 0.5:  # 强趋势
+        trend_factor = 1.3
+    elif slope_pct > 0.2:  # 中等趋势
+        trend_factor = 1.0
+    else:  # 弱趋势
+        trend_factor = 0.7
+    
+    # 计算持仓时间范围
+    avg_minutes = base_minutes * volatility_factor * trend_factor
+    min_minutes = avg_minutes * 0.6
+    max_minutes = avg_minutes * 1.4
+    
+    # 格式化时间
+    def format_minutes(mins):
+        if mins < 60:
+            return f"{int(mins)}分钟"
+        elif mins < 1440:
+            hours = mins / 60
+            return f"{hours:.1f}小时"
+        else:
+            days = mins / 1440
+            return f"{days:.1f}天"
+    
+    return {
+        "min_minutes": int(min_minutes),
+        "max_minutes": int(max_minutes),
+        "avg_minutes": int(avg_minutes),
+        "min_text": format_minutes(min_minutes),
+        "max_text": format_minutes(max_minutes),
+        "avg_text": format_minutes(avg_minutes),
+        "volatility_factor": volatility_factor,
+        "trend_factor": trend_factor,
+        "atr_pct": round(atr_pct, 2),
+        "slope_pct": round(slope_pct, 4)
+    }
+
     return {
         "pivot": float(pivot),
         "r1": float(r1), "r2": float(r2),
@@ -259,12 +321,13 @@ def api_predict():
         signal_class = "strong-bearish"
     
     # 操作建议
+    ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
     if score >= 60:
-        advice = f"可考虑做多，止损设在 ${sr['s1']:,.2f}，第一目标 ${sr['r1']:,.2f}"
+        advice = f"可考虑做多，止损设在 ${sr['s1']:,.2f}，第一目标 ${sr['r1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
     elif score <= 40:
-        advice = f"可考虑做空，止损设在 ${sr['r1']:,.2f}，第一目标 ${sr['s1']:,.2f}"
+        advice = f"可考虑做空，止损设在 ${sr['r1']:,.2f}，第一目标 ${sr['s1']:,.2f}，建议持仓 {ht['min_text']}~{ht['max_text']}"
     else:
-        advice = "信号不明确，建议观望等待"
+        advice = f"信号不明确，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
     
     return jsonify({
         "symbol": symbol,
@@ -280,6 +343,7 @@ def api_predict():
         "signal_class": signal_class,
         "reasons": reasons,
         "support_resistance": sr,
+        "holding_time": calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"])),
         "advice": advice,
         "timestamp": datetime.now().isoformat(),
         "candles_count": len(df)
