@@ -975,8 +975,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             });
             const winRate=closedOrders.length?wins.length/closedOrders.length*100:0;
             // 信号胜率统计（基于预测记录）
-            const predictions=getPredictions();
-            const verifiedPreds=predictions.filter(p=>p.verified);
+            const history=getHistory();
+            const verifiedPreds=history.filter(p=>p.verified);
             const correctPreds=verifiedPreds.filter(p=>p.correct);
             const predWinRate=verifiedPreds.length?correctPreds.length/verifiedPreds.length*100:0;
             
