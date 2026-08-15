@@ -273,31 +273,79 @@ def calc_indicators(df):
     df["vol_ratio"] = volume / df["vol_ma20"]
     df["pct_change"] = close.pct_change() * 100
     
+    # KDJ指标
+    low_9 = low.rolling(window=9).min()
+    high_9 = high.rolling(window=9).max()
+    rsv = (close - low_9) / (high_9 - low_9) * 100
+    df["kdj_k"] = rsv.ewm(com=2).mean()
+    df["kdj_d"] = df["kdj_k"].ewm(com=2).mean()
+    df["kdj_j"] = 3 * df["kdj_k"] - 2 * df["kdj_d"]
+    
+    # 威廉指标
+    df["willr"] = -100 * (high_9 - close) / (high_9 - low_9)
+    
+    # CCI指标
+    tp = (high + low + close) / 3
+    df["cci"] = (tp - tp.rolling(20).mean()) / (0.015 * tp.rolling(20).std())
+    
+    # 填充NaN为默认值
+    df["kdj_k"] = df["kdj_k"].fillna(50)
+    df["kdj_d"] = df["kdj_d"].fillna(50)
+    df["kdj_j"] = df["kdj_j"].fillna(50)
+    df["willr"] = df["willr"].fillna(-50)
+    df["cci"] = df["cci"].fillna(0)
+    
     return df
 
 def predict_price(df, periods=5):
-    """简单预测未来价格"""
-    recent = df.tail(30).copy()
-    recent["x"] = np.arange(len(recent))
+    """优化预测：加权线性回归 + 动量调整 + 均值回归"""
+    df = df.dropna(subset=["close"])
+    if len(df) < 30:
+        return {"predicted": [float(df["close"].iloc[-1])] * periods, "trend": "数据不足", "slope": 0, "momentum": 0, "volatility": 0, "mean_reversion": 0}
     
-    x = recent["x"].values
+    recent = df.tail(30)
+    x = np.arange(len(recent))
     y = recent["close"].values
-    coeffs = np.polyfit(x, y, 1)
-    slope = coeffs[0]
-    intercept = coeffs[1]
+    
+    # 加权线性回归（近期权重更大）
+    weights = np.linspace(0.5, 2.0, len(recent))
+    try:
+        slope, intercept = np.polyfit(x, y, 1, w=weights)
+    except:
+        slope, intercept = np.polyfit(x, y, 1)
     
     future_x = np.arange(len(recent), len(recent) + periods)
-    predicted = slope * future_x + intercept
+    base_pred = slope * future_x + intercept
     
-    momentum = (df["close"].iloc[-1] - df["close"].iloc[-5]) / df["close"].iloc[-5] * 100
-    volatility = df["pct_change"].tail(20).std()
+    # 动量调整
+    momentum_1 = (recent["close"].iloc[-1] - recent["close"].iloc[-3]) / recent["close"].iloc[-3]
+    momentum_3 = (recent["close"].iloc[-1] - recent["close"].iloc[-10]) / recent["close"].iloc[-10]
+    avg_momentum = (momentum_1 * 0.6 + momentum_3 * 0.4)
+    current_price = recent["close"].iloc[-1]
+    
+    # 均值回归
+    ma20 = recent["close"].rolling(20).mean().iloc[-1]
+    deviation = (current_price - ma20) / ma20 if ma20 else 0
+    mean_reversion = -deviation * 0.1
+    
+    # 波动率
+    volatility = float(df["pct_change"].tail(20).std())
+    
+    # 最终预测
+    momentum_adj = np.linspace(0, avg_momentum * current_price * 0.3, periods)
+    reversion_adj = np.linspace(0, mean_reversion * current_price * 0.5, periods)
+    predicted = base_pred + momentum_adj + reversion_adj
+    
+    trend_score = slope / current_price * 100 + avg_momentum * 50
+    trend = "上涨" if trend_score > 0.3 else "下跌" if trend_score < -0.3 else "震荡"
     
     return {
-        "predicted": [float(p) for p in predicted],
+        "predicted": [round(float(p), 2) for p in predicted],
         "slope": float(slope),
-        "momentum": float(momentum),
-        "volatility": float(volatility),
-        "trend": "上涨" if slope > 0 else "下跌"
+        "momentum": round(float(avg_momentum * 100), 2),
+        "volatility": round(float(volatility), 2),
+        "trend": trend,
+        "mean_reversion": round(float(mean_reversion * 100), 2)
     }
 
 def calc_signal_score(df):
