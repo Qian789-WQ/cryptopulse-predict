@@ -305,7 +305,9 @@
             </div>
             <div class="grid">
                 <div class="card"><div class="card-title">多因子信号</div><div class="reasons" id="reasonsList"></div></div>
-                <div class="card"><div class="card-title">⚠️ 高级信号</div><div id="advancedSignals" style="font-size:11px"></div></div>
+                <div class="card"><div class="card-title">⚠️ 高级信号 <span id="monitorStatus" style="float:right;font-size:10px;color:#525f7a"></span></div><div id="advancedSignals" style="font-size:11px"></div>
+                    <div id="orderAlerts" style="margin-top:8px"></div>
+                </div>
                 <div class="card"><div class="card-title">支撑阻力 & 斐波那契</div><div class="sr-grid" id="srList"></div></div>
                 <div class="card"><div class="card-title">成交量监控</div><div id="volumeBox"></div></div>
             </div>
@@ -679,6 +681,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             order.pnl_pct=Math.round(pnlPct*100)/100;
             order.close_reason='手动平仓';
             saveOrders(orders);
+            // 清除该订单的提醒记录
+            delete alertedLevels[order.id];
             // 刷新按钮状态
             document.getElementById('closeOrderBtn').style.display='none';
             document.getElementById('placeOrderBtn').style.display='inline-block';
@@ -751,6 +755,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const orders=getOrders();
             orders.unshift(order);
             saveOrders(orders);
+            // 重置该订单的提醒记录
+            alertedLevels[order.id]={};
             document.getElementById('placeOrderBtn').textContent='✓ 已记录';
             document.getElementById('placeOrderBtn').style.background='#525f7a';
             setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='✓ 已下单';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
@@ -771,10 +777,18 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         // 实时价格缓存
         let livePrices={};
         
+        // 已提醒的价位记录，避免重复提醒
+        let alertedLevels={};
+        
         async function updateLivePrices(){
             const orders=getOrders();
             const openOrders=orders.filter(o=>o.status==='open');
-            if(openOrders.length===0)return;
+            if(openOrders.length===0){
+                document.getElementById('monitorStatus').textContent='';
+                return;
+            }
+            document.getElementById('monitorStatus').textContent=`监控中(${openOrders.length}单)`;
+            
             // 获取每个持仓币种的实时价格
             for(const order of openOrders){
                 try{
@@ -782,12 +796,110 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     const data=await resp.json();
                     if(!data.error){
                         livePrices[order.symbol]=data.current_price;
+                        // 检查订单提醒
+                        checkOrderAlerts(order, data.current_price);
                     }
                 }catch(e){}
             }
             // 如果当前在下单记录tab，重新渲染
             if(currentHistoryTab==='orders'&&document.getElementById('historyPanel').style.display!=='none'){
                 renderOrders();
+            }
+        }
+        
+        function checkOrderAlerts(order, currentPrice){
+            const key=order.id;
+            if(!alertedLevels[key])alertedLevels[key]={};
+            
+            const symbol=order.symbol.replace('-USDT-SWAP','');
+            const isLong=order.direction==='long';
+            
+            // 检查各个关键价位
+            const levels=[
+                {name:'止损', price:order.stop_loss, type:'danger', pct:0.3},
+                {name:'TP1', price:order.tp1, type:'success', pct:0.3},
+                {name:'TP2', price:order.tp2, type:'success', pct:0.3},
+                {name:'TP3', price:order.tp3, type:'success', pct:0.3},
+            ];
+            
+            for(const level of levels){
+                const distance=Math.abs(currentPrice-level.price)/level.price*100;
+                // 距离小于0.3%时提醒
+                if(distance<level.pct && !alertedLevels[key][level.name]){
+                    alertedLevels[key][level.name]=true;
+                    const msg=`${symbol} ${order.direction_text} ${level.name}提醒\n现价: $${currentPrice.toFixed(2)}\n${level.name}: $${level.price.toFixed(2)}\n距离: ${distance.toFixed(2)}%`;
+                    // 浏览器通知
+                    if('Notification' in window&&Notification.permission==='granted'){
+                        new Notification(`🚨 ${level.name}提醒`, {body: `${symbol} 现价$${currentPrice.toFixed(2)} 接近${level.name} $${level.price.toFixed(2)}`});
+                    }
+                    // 微信推送
+                    pushWechat(`🚨 ${symbol} ${level.name}提醒`, msg);
+                    // 页面显示
+                    showOrderAlert(level.name, symbol, currentPrice, level.price, level.type);
+                }
+                // 离开后重置提醒
+                if(distance>1){
+                    alertedLevels[key][level.name]=false;
+                }
+            }
+            
+            // 检查是否已止损或止盈
+            if(isLong){
+                if(currentPrice<=order.stop_loss && !alertedLevels[key]['stop_hit']){
+                    alertedLevels[key]['stop_hit']=true;
+                    const msg=`${symbol} 做多已触发止损\n入场: $${order.entry}\n止损: $${order.stop_loss}\n现价: $${currentPrice.toFixed(2)}`;
+                    pushWechat('❌ 止损触发', msg);
+                    if('Notification' in window&&Notification.permission==='granted'){
+                        new Notification('❌ 止损触发', {body:`${symbol} 现价$${currentPrice.toFixed(2)} 已到止损`});
+                    }
+                    showOrderAlert('止损触发', symbol, currentPrice, order.stop_loss, 'danger');
+                }
+                if(currentPrice>=order.tp1 && !alertedLevels[key]['tp1_hit']){
+                    alertedLevels[key]['tp1_hit']=true;
+                    const msg=`${symbol} 做多已到TP1\n入场: $${order.entry}\nTP1: $${order.tp1}\n现价: $${currentPrice.toFixed(2)}\n建议平仓30%`;
+                    pushWechat('✅ TP1到达', msg);
+                    if('Notification' in window&&Notification.permission==='granted'){
+                        new Notification('✅ TP1到达', {body:`${symbol} 现价$${currentPrice.toFixed(2)} 已到TP1，建议平仓30%`});
+                    }
+                    showOrderAlert('TP1到达', symbol, currentPrice, order.tp1, 'success');
+                }
+            }else{
+                if(currentPrice>=order.stop_loss && !alertedLevels[key]['stop_hit']){
+                    alertedLevels[key]['stop_hit']=true;
+                    const msg=`${symbol} 做空已触发止损\n入场: $${order.entry}\n止损: $${order.stop_loss}\n现价: $${currentPrice.toFixed(2)}`;
+                    pushWechat('❌ 止损触发', msg);
+                    if('Notification' in window&&Notification.permission==='granted'){
+                        new Notification('❌ 止损触发', {body:`${symbol} 现价$${currentPrice.toFixed(2)} 已到止损`});
+                    }
+                    showOrderAlert('止损触发', symbol, currentPrice, order.stop_loss, 'danger');
+                }
+                if(currentPrice<=order.tp1 && !alertedLevels[key]['tp1_hit']){
+                    alertedLevels[key]['tp1_hit']=true;
+                    const msg=`${symbol} 做空已到TP1\n入场: $${order.entry}\nTP1: $${order.tp1}\n现价: $${currentPrice.toFixed(2)}\n建议平仓30%`;
+                    pushWechat('✅ TP1到达', msg);
+                    if('Notification' in window&&Notification.permission==='granted'){
+                        new Notification('✅ TP1到达', {body:`${symbol} 现价$${currentPrice.toFixed(2)} 已到TP1，建议平仓30%`});
+                    }
+                    showOrderAlert('TP1到达', symbol, currentPrice, order.tp1, 'success');
+                }
+            }
+        }
+        
+        function showOrderAlert(levelName, symbol, price, targetPrice, type){
+            const el=document.getElementById('orderAlerts');
+            const color=type==='danger'?'#e74c3c':'#2ecc71';
+            const time=new Date().toLocaleTimeString('zh-CN');
+            const alertHtml=`<div style="padding:6px 8px;background:${color}22;border-left:3px solid ${color};border-radius:4px;margin-bottom:4px;font-size:11px">
+                <span style="color:${color};font-weight:700">🚨 ${levelName}</span>
+                <span style="color:#8892b0;margin-left:6px">${symbol}</span>
+                <span style="float:right;color:#525f7a">${time}</span>
+                <div style="margin-top:2px;color:#8892b0">现价 $${price.toFixed(2)} / 目标 $${targetPrice.toFixed(2)}</div>
+            </div>`;
+            el.innerHTML=alertHtml+el.innerHTML;
+            // 最多保留5条
+            const alerts=el.children;
+            while(alerts.length>5){
+                el.removeChild(alerts[alerts.length-1]);
             }
         }
         
