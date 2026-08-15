@@ -151,6 +151,20 @@
                 </div>
                 <div id="alertList" style="margin-top:8px;font-size:11px"></div>
             </div>
+            <!-- 微信推送设置 -->
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1a2340">
+                <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">💬 微信推送设置</div>
+                <div style="font-size:11px;color:#525f7a;margin-bottom:6px">
+                    1. 微信扫码注册 <a href="https://sct.ftqq.com/" target="_blank" style="color:#667eea">Server酱</a> 获取SendKey<br>
+                    2. 填入下方，价格到了/持仓时间到了会推送到微信
+                </div>
+                <div style="display:flex;gap:6px">
+                    <input type="text" id="wechatKey" placeholder="输入你的SendKey (SCT开头)" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px">
+                    <button onclick="saveWechatKey()" style="padding:6px 10px;background:#07c160;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">保存</button>
+                    <button onclick="testWechat()" style="padding:6px 10px;background:#525f7a;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">测试</button>
+                </div>
+                <div id="wechatStatus" style="margin-top:6px;font-size:11px"></div>
+            </div>
             <!-- 信号历史准确率 -->
             <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1a2340">
                 <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">📊 预测历史准确率</div>
@@ -475,15 +489,15 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             priceAlerts=priceAlerts.filter(a=>{
                 if(a.symbol!==selectedSymbol)return true;
                 if(a.dir==='above'&&currentPrice>=a.price){
-                    if('Notification' in window&&Notification.permission==='granted'){
-                        new Notification('🚨 价格提醒',{body:`${a.symbol.replace('-USDT-SWAP','')} 已达到 $${currentPrice.toFixed(2)}（目标高于 $${a.price}）`});
-                    }
+                    const msg=`${a.symbol.replace('-USDT-SWAP','')} 已达到 $${currentPrice.toFixed(2)}（目标高于 $${a.price}）`;
+                    if('Notification' in window&&Notification.permission==='granted')new Notification('🚨 价格提醒',{body:msg});
+                    pushWechat('🚨 价格提醒',msg);
                     return false;
                 }
                 if(a.dir==='below'&&currentPrice<=a.price){
-                    if('Notification' in window&&Notification.permission==='granted'){
-                        new Notification('🚨 价格提醒',{body:`${a.symbol.replace('-USDT-SWAP','')} 已达到 $${currentPrice.toFixed(2)}（目标低于 $${a.price}）`});
-                    }
+                    const msg=`${a.symbol.replace('-USDT-SWAP','')} 已达到 $${currentPrice.toFixed(2)}（目标低于 $${a.price}）`;
+                    if('Notification' in window&&Notification.permission==='granted')new Notification('🚨 价格提醒',{body:msg});
+                    pushWechat('🚨 价格提醒',msg);
                     return false;
                 }
                 return true;
@@ -500,9 +514,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const minutes=ht.avg_minutes||60;
             if(holdingAlarm)clearTimeout(holdingAlarm);
             holdingAlarm=setTimeout(()=>{
-                if('Notification' in window&&Notification.permission==='granted'){
-                    new Notification('⏰ 持仓时间提醒',{body:`建议持仓时间已到，请评估是否平仓`});
-                }
+                const msg='建议持仓时间已到，请评估是否平仓';
+                if('Notification' in window&&Notification.permission==='granted')new Notification('⏰ 持仓时间提醒',{body:msg});
+                pushWechat('⏰ 持仓时间提醒',msg);
                 alert('⏰ 建议持仓时间已到，请评估是否平仓！');
             },minutes*60*1000);
             document.getElementById('holdingText').textContent=`⏰ 提醒已设置：${minutes}分钟后提醒平仓`;
@@ -541,6 +555,34 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             el.innerHTML=`总预测：${history.length}次 · 看涨${bullish}次 · 看跌${bearish}次 · 观望${neutral}次<br><span style="color:#525f7a">预测记录保存在本地，用于统计模型准确率</span>`;
         }
         
+        // 微信推送
+        function getWechatKey(){return localStorage.getItem('cp_wechat_key')||''}
+        function saveWechatKey(){
+            const key=document.getElementById('wechatKey').value.trim();
+            if(!key){alert('请输入SendKey');return}
+            localStorage.setItem('cp_wechat_key',key);
+            document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 已保存，微信推送已启用</span>';
+        }
+        async function testWechat(){
+            const key=getWechatKey();
+            if(!key){document.getElementById('wechatStatus').innerHTML='<span class="red">请先输入并保存SendKey</span>';return}
+            document.getElementById('wechatStatus').textContent='发送中...';
+            try{
+                const resp=await fetch('/api/wechat-push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sendkey:key,title:'CryptoPulse测试消息',desp:'微信推送配置成功！价格提醒和持仓提醒会推送到这里。'})});
+                const data=await resp.json();
+                if(data.success){document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 测试推送成功，请查看微信</span>'}
+                else{document.getElementById('wechatStatus').innerHTML='<span class="red">✗ 失败：'+data.error+'</span>'}
+            }catch(e){document.getElementById('wechatStatus').innerHTML='<span class="red">✗ 请求失败</span>'}
+        }
+        async function pushWechat(title,desp){
+            const key=getWechatKey();
+            if(!key)return false;
+            try{
+                await fetch('/api/wechat-push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sendkey:key,title,desp})});
+                return true;
+            }catch(e){return false}
+        }
+        
         // 加载恐慌贪婪指数
         async function loadFearGreed(){
             try{
@@ -556,6 +598,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             predict();
             renderAlerts();
             loadFearGreed();
+            const savedKey=getWechatKey();
+            if(savedKey){document.getElementById('wechatKey').value=savedKey;document.getElementById('wechatStatus').innerHTML='<span class="green">✓ 微信推送已启用</span>'}
             // 每30秒检查价格提醒
             setInterval(()=>{
                 if(currentData)checkPriceAlerts(currentData.current_price);

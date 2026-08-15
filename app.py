@@ -1211,6 +1211,35 @@ def api_scan():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/wechat-push", methods=["POST"])
+def api_wechat_push():
+    """微信推送（Server酱）"""
+    try:
+        data = request.get_json()
+        sendkey = data.get("sendkey", "")
+        title = data.get("title", "CryptoPulse提醒")
+        desp = data.get("desp", "")
+        
+        if not sendkey:
+            return jsonify({"success": False, "error": "缺少SendKey"})
+        
+        # Server酱推送API
+        url = f"https://sctapi.ftqq.com/{sendkey}.send"
+        payload = {"title": title, "desp": desp}
+        resp = requests.post(url, data=payload, timeout=10)
+        
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("code") == 0:
+                return jsonify({"success": True, "message": "推送成功"})
+            else:
+                return jsonify({"success": False, "error": result.get("message", "推送失败")})
+        else:
+            return jsonify({"success": False, "error": f"HTTP {resp.status_code}"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/fear-greed")
 def api_fear_greed():
     """获取恐慌贪婪指数"""
