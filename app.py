@@ -253,6 +253,254 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
             days = mins / 1440
             return f"{days:.1f}天"
     
+
+
+def calc_trade_plan(score, current_price, atr, sr, symbol):
+    """计算精确交易计划：入场、止损、TP1/2/3、仓位、盈亏比"""
+    # 基于评分决定方向
+    if score >= 55:
+        direction = "long"
+        direction_text = "做多"
+    elif score <= 45:
+        direction = "short"
+        direction_text = "做空"
+    else:
+        return {
+            "direction": "neutral",
+            "direction_text": "观望",
+            "entry": None, "stop_loss": None,
+            "tp1": None, "tp2": None, "tp3": None,
+            "position_size": 0, "risk_reward": 0,
+            "message": "信号不明确，建议观望"
+        }
+    
+    # ATR止损倍数
+    atr_sl_mult = 1.5
+    atr_tp1_mult = 2.0  # 1:1.33
+    atr_tp2_mult = 3.0  # 1:2
+    atr_tp3_mult = 4.5  # 1:3
+    
+    if direction == "long":
+        entry = current_price
+        stop_loss = entry - atr * atr_sl_mult
+        tp1 = entry + atr * atr_tp1_mult
+        tp2 = entry + atr * atr_tp2_mult
+        tp3 = entry + atr * atr_tp3_mult
+    else:
+        entry = current_price
+        stop_loss = entry + atr * atr_sl_mult
+        tp1 = entry - atr * atr_tp1_mult
+        tp2 = entry - atr * atr_tp2_mult
+        tp3 = entry - atr * atr_tp3_mult
+    
+    # 盈亏比（用TP1算）
+    risk = abs(entry - stop_loss)
+    reward = abs(tp1 - entry)
+    risk_reward = round(reward / risk, 2) if risk > 0 else 0
+    
+    # 建议仓位（基于1%风险法则，假设账户1000USDT）
+    account_size = 1000  # 默认账户大小
+    risk_per_trade = 0.01  # 1%风险
+    risk_amount = account_size * risk_per_trade
+    if risk > 0:
+        position_size = round(risk_amount / risk * entry, 2)
+    else:
+        position_size = 0
+    
+    # 仓位百分比
+    position_pct = round(position_size / account_size * 100, 1)
+    
+    return {
+        "direction": direction,
+        "direction_text": direction_text,
+        "entry": round(entry, 2),
+        "stop_loss": round(stop_loss, 2),
+        "tp1": round(tp1, 2),
+        "tp2": round(tp2, 2),
+        "tp3": round(tp3, 2),
+        "position_size": position_size,
+        "position_pct": position_pct,
+        "risk_reward": risk_reward,
+        "risk_amount": round(risk_amount, 2),
+        "atr_sl_mult": atr_sl_mult,
+        "message": f"{direction_text}，盈亏比1:{risk_reward}"
+    }
+
+
+def analyze_multi_timeframe(symbol, current_timeframe):
+    """多周期共振分析：同时分析多个周期的趋势"""
+    # 要分析的周期
+    timeframes = ["15m", "1H", "4H", "1D"]
+    results = {}
+    
+    for tf in timeframes:
+        df, error = fetch_klines(symbol, tf, 200)
+        if error or df is None or len(df) < 50:
+            results[tf] = {"trend": "unknown", "score": 50, "error": error or "数据不足"}
+            continue
+        
+        df = calc_indicators(df)
+        latest = df.iloc[-1]
+        
+        # 简单趋势判断
+        trend_score = 50
+        if latest["ma7"] > latest["ma21"] > latest["ma50"]:
+            trend = "上涨"
+            trend_score = 75
+        elif latest["ma7"] < latest["ma21"] < latest["ma50"]:
+            trend = "下跌"
+            trend_score = 25
+        elif latest["ma7"] > latest["ma21"]:
+            trend = "偏多"
+            trend_score = 60
+        elif latest["ma7"] < latest["ma21"]:
+            trend = "偏空"
+            trend_score = 40
+        else:
+            trend = "震荡"
+            trend_score = 50
+        
+        # RSI辅助判断
+        rsi = latest["rsi"]
+        if rsi > 70:
+            trend_score -= 10
+        elif rsi < 30:
+            trend_score += 10
+        
+        trend_score = max(0, min(100, trend_score))
+        results[tf] = {
+            "trend": trend,
+            "score": trend_score,
+            "rsi": round(float(rsi), 1),
+            "price": round(float(latest["close"]), 2)
+        }
+    
+    # 计算共振程度
+    scores = [results[tf]["score"] for tf in timeframes if "score" in results[tf]]
+    avg_score = sum(scores) / len(scores) if scores else 50
+    
+    # 判断共振方向
+    bullish_count = sum(1 for s in scores if s >= 55)
+    bearish_count = sum(1 for s in scores if s <= 45)
+    
+    if bullish_count >= 3:
+        resonance = "强烈多头共振"
+        resonance_level = 3
+    elif bullish_count >= 2:
+        resonance = "多头共振"
+        resonance_level = 2
+    elif bearish_count >= 3:
+        resonance = "强烈空头共振"
+        resonance_level = -3
+    elif bearish_count >= 2:
+        resonance = "空头共振"
+        resonance_level = -2
+    else:
+        resonance = "无明显共振"
+        resonance_level = 0
+    
+    return {
+        "timeframes": results,
+        "avg_score": round(avg_score, 1),
+        "resonance": resonance,
+        "resonance_level": resonance_level,
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "current_timeframe": current_timeframe
+    }
+
+
+def get_funding_rate(symbol):
+    """获取当前资金费率"""
+    try:
+        url = "https://www.okx.com/api/v5/public/funding-rate"
+        params = {"instId": symbol}
+        resp = requests.get(url, params=params, timeout=10)
+        data = resp.json()
+        if data.get("code") == "0" and data.get("data"):
+            item = data["data"][0]
+            rate = float(item.get("fundingRate", 0)) * 100  # 转成百分比
+            next_time = int(item.get("nextFundingTime", 0))
+            return {
+                "rate": round(rate, 4),
+                "rate_text": f"{rate:+.4f}%",
+                "next_time": next_time,
+                "next_time_text": datetime.fromtimestamp(next_time/1000).strftime("%H:%M") if next_time else "--",
+                "warning": rate > 0.05 or rate < -0.05  # 费率过高提醒
+            }
+    except Exception as e:
+        pass
+    return {"rate": 0, "rate_text": "--", "next_time": 0, "next_time_text": "--", "warning": False}
+
+
+
+def calc_fibonacci_and_levels(df):
+    """计算斐波那契回撤位和前高前低"""
+    recent = df.tail(50)
+    high = recent["high"].max()
+    low = recent["low"].min()
+    diff = high - low
+    
+    # 斐波那契回撤位
+    fib_levels = {
+        "0.236": round(high - diff * 0.236, 2),
+        "0.382": round(high - diff * 0.382, 2),
+        "0.5": round(high - diff * 0.5, 2),
+        "0.618": round(high - diff * 0.618, 2),
+        "0.786": round(high - diff * 0.786, 2),
+    }
+    
+    # 前高前低（最近20根）
+    recent20 = df.tail(20)
+    prev_high = round(recent20["high"].iloc[:-1].max(), 2)
+    prev_low = round(recent20["low"].iloc[:-1].min(), 2)
+    
+    # 整数关口
+    current = df["close"].iloc[-1]
+    round_level = round(current / 1000) * 1000 if current > 1000 else round(current / 100) * 100
+    
+    return {
+        "fibonacci": fib_levels,
+        "prev_high": prev_high,
+        "prev_low": prev_low,
+        "round_level": round_level,
+        "swing_high": round(high, 2),
+        "swing_low": round(low, 2)
+    }
+
+
+
+def detect_volume_anomaly(df):
+    """检测成交量异常"""
+    latest = df.iloc[-1]
+    vol_ratio = latest["vol_ratio"]
+    pct_change = latest["pct_change"]
+    
+    anomalies = []
+    
+    # 放量突破
+    if vol_ratio > 2.0 and abs(pct_change) > 1:
+        if pct_change > 0:
+            anomalies.append({"type": "volume_breakout", "text": f"放量上涨突破 (量比{vol_ratio:.1f})", "bullish": True})
+        else:
+            anomalies.append({"type": "volume_breakdown", "text": f"放量下跌破位 (量比{vol_ratio:.1f})", "bullish": False})
+    
+    # 缩量回调
+    if vol_ratio < 0.5 and abs(pct_change) < 0.5:
+        anomalies.append({"type": "low_volume", "text": f"缩量整理 (量比{vol_ratio:.1f})", "bullish": None})
+    
+    # 天量
+    if vol_ratio > 3:
+        anomalies.append({"type": "extreme_volume", "text": f"⚠️ 异常天量 (量比{vol_ratio:.1f})，注意变盘", "bullish": None})
+    
+    return {
+        "vol_ratio": round(float(vol_ratio), 2),
+        "anomalies": anomalies,
+        "has_anomaly": len(anomalies) > 0
+    }
+
+
+
     return {
         "min_minutes": int(min_minutes),
         "max_minutes": int(max_minutes),
@@ -344,6 +592,11 @@ def api_predict():
         "reasons": reasons,
         "support_resistance": sr,
         "holding_time": calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"])),
+        "trade_plan": calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol),
+        "multi_tf": analyze_multi_timeframe(symbol, timeframe),
+        "funding_rate": get_funding_rate(symbol),
+        "fib_levels": calc_fibonacci_and_levels(df),
+        "volume_anomaly": detect_volume_anomaly(df),
         "advice": advice,
         "timestamp": datetime.now().isoformat(),
         "candles_count": len(df)
