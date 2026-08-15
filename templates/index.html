@@ -919,10 +919,16 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 floatingPnl+=pnlPct/100*1000*o.position_pct/100*o.leverage;
             });
             const winRate=closedOrders.length?wins.length/closedOrders.length*100:0;
+            // 信号胜率统计（基于预测记录）
+            const predictions=getPredictions();
+            const verifiedPreds=predictions.filter(p=>p.verified);
+            const correctPreds=verifiedPreds.filter(p=>p.correct);
+            const predWinRate=verifiedPreds.length?correctPreds.length/verifiedPreds.length*100:0;
+            
             document.getElementById('historyStats').innerHTML=`
                 <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${orders.length}</div><div style="font-size:10px;color:#525f7a">总下单</div></div>
                 <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#f39c12">${openOrders.length}</div><div style="font-size:10px;color:#525f7a">持仓中</div></div>
-                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${floatingPnl>=0?'#2ecc71':'#e74c3c'}">${floatingPnl>=0?'+':''}${floatingPnl.toFixed(1)}</div><div style="font-size:10px;color:#525f7a">浮动盈亏</div></div>
+                <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${predWinRate>=50?'#2ecc71':'#e74c3c'}">${predWinRate.toFixed(0)}%</div><div style="font-size:10px;color:#525f7a">信号胜率</div></div>
                 <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${totalPnl>=0?'#2ecc71':'#e74c3c'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(0)}</div><div style="font-size:10px;color:#525f7a">已平仓盈亏</div></div>
             `;
             el.innerHTML=orders.map(o=>{
@@ -1207,6 +1213,26 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     </div>
                     <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
                 `;
+                // 分批入场
+                if(tp.pyramid&&tp.pyramid.enabled){
+                    document.getElementById('tradePlan').innerHTML+=`
+                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3450">
+                        <div style="font-size:11px;color:#f39c12;margin-bottom:4px">📊 金字塔加仓</div>
+                        <div style="font-size:10px;color:#8892b0;display:grid;grid-template-columns:1fr 1fr;gap:2px">
+                            <span>首仓50%: $${tp.pyramid.entry1.price}</span>
+                            <span>二仓30%: $${tp.pyramid.entry2.price}</span>
+                            <span>三仓20%: $${tp.pyramid.entry3.price}</span>
+                            <span>均价: $${tp.pyramid.avg_price}</span>
+                        </div>
+                    </div>`;
+                }
+                // 时间止损
+                if(tp.time_stop){
+                    document.getElementById('tradePlan').innerHTML+=`
+                    <div style="margin-top:6px;padding-top:6px;border-top:1px solid #2a3450">
+                        <div style="font-size:10px;color:#e74c3c">⏰ 时间止损: ${tp.time_stop.rule}</div>
+                    </div>`;
+                }
             }
             
             // 更新高级信号
@@ -1266,6 +1292,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             // 启动自动更新
             document.getElementById('updateCountdown').style.display='block';
             startAutoUpdate();
+            // 启动WebSocket实时价格
+            connectWebSocket();
             // 立即更新持仓价格
             setTimeout(updateLivePrices, 2000);
             const savedKey=getWechatKey();
