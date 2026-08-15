@@ -262,6 +262,17 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
             days = mins / 1440
             return f"{days:.1f}天"
     
+    return {
+        "min_text": format_minutes(min_minutes),
+        "max_text": format_minutes(max_minutes),
+        "avg_text": format_minutes(avg_minutes),
+        "min_minutes": round(min_minutes, 1),
+        "max_minutes": round(max_minutes, 1),
+        "avg_minutes": round(avg_minutes, 1),
+        "volatility_factor": volatility_factor,
+        "trend_factor": trend_factor
+    }
+    
 
 
 def calc_trade_plan(score, current_price, atr, sr, symbol):
