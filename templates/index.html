@@ -283,7 +283,7 @@
                 </div>
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
-            <div class="grid-2">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
                 <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <span><button id="closeOrderBtn" onclick="quickCloseOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(231,76,60,0.3);margin-right:6px">✗ 平仓</button><button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">✓ 已下单</button></span></div>
                     <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
                     <div id="confidenceBar" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
@@ -302,6 +302,10 @@
                             <div style="font-size:10px;color:#525f7a" id="holdDetail">--</div>
                         </div>
                     </div>
+                </div>
+                <div class="card" id="pyramidCard" style="display:none">
+                    <div class="card-title">🔔 补仓/平仓提醒</div>
+                    <div id="pyramidContent"></div>
                 </div>
             </div>
             <div class="grid">
