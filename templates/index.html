@@ -371,8 +371,19 @@
                 let col='#f39c12';if(sc>=70)col='#2ecc71';else if(sc>=55)col='#58d68d';else if(sc>=45)col='#f39c12';else if(sc>=30)col='#e67e22';else col='#e74c3c';
                 scEl.style.setProperty('--score-color',col);document.getElementById('scoreVal').textContent=sc;
                 document.getElementById('signalVal').textContent=d.signal;document.getElementById('signalVal').className='score-signal signal-'+d.signal_class;
-                const fgText = d.fear_greed ? ` · 恐慌贪婪 ${d.fear_greed.value}` : '';
-                document.getElementById('scoreDetail').textContent=`RSI ${d.rsi.toFixed(0)} · KDJ ${d.kdj?d.kdj.k.toFixed(0):'--'} · 量比 ${d.vol_ratio.toFixed(1)}${fgText}`;
+                let fgText = '';
+                if(d.fear_greed){
+                    const v = d.fear_greed.value;
+                    let fgLabel = '';
+                    let fgColor = '';
+                    if(v <= 24){fgLabel='极度恐惧';fgColor='#e74c3c';}
+                    else if(v <= 44){fgLabel='恐惧';fgColor='#e67e22';}
+                    else if(v <= 55){fgLabel='中性';fgColor='#f1c40f';}
+                    else if(v <= 75){fgLabel='贪婪';fgColor='#2ecc71';}
+                    else{fgLabel='极度贪婪';fgColor='#27ae60';}
+                    fgText = ` · 恐慌贪婪 <span style="color:${fgColor};font-weight:600">${fgLabel}</span>`;
+                }
+                document.getElementById('scoreDetail').innerHTML=`RSI ${d.rsi.toFixed(0)} · KDJ ${d.kdj?d.kdj.k.toFixed(0):'--'} · 量比 ${d.vol_ratio.toFixed(1)}${fgText}`;
                 const mt=d.multi_tf;document.getElementById('resonanceVal').textContent=mt.resonance;
                 document.getElementById('resonanceVal').className=mt.resonance_level>0?'green':mt.resonance_level<0?'red':'yellow';
                 document.getElementById('multiTf').innerHTML=Object.entries(mt.timeframes).map(([t,i])=>{const c=i.score>=55?'green':i.score<=45?'red':'yellow';return `<div class="tf-item"><div class="tf-name">${t}</div><div class="tf-trend ${c}">${i.trend}</div><div class="tf-score">${i.score}</div></div>`}).join('');
@@ -1377,6 +1388,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const p=tp.pyramid;
             const ts=tp.time_stop;
             const isLong=tp.direction==='long';
+            const color=isLong?'#2ecc71':'#e74c3c';
+            const symbol=d.symbol.replace('-USDT-SWAP','');
             const price=d.current_price;
             
             // 检查哪个补仓位最近
@@ -1385,6 +1398,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const nextAdd = dist2<dist3 ? {price:p.entry2.price, pct:p.entry2.pct, dist:dist2, name:'二仓'} : {price:p.entry3.price, pct:p.entry3.pct, dist:dist3, name:'三仓'};
             
             content.innerHTML=`
+                <div style="font-size:13px;font-weight:700;color:${color};margin-bottom:10px;text-align:center">
+                    ${symbol} ${tp.direction_text} · 现价 $${price.toLocaleString()}
+                </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                     <!-- 补仓提醒 -->
                     <div style="background:#131a2b;border-radius:8px;padding:10px;border-left:3px solid #f39c12">
