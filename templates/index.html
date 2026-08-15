@@ -1300,26 +1300,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     </div>
                     <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
                 `;
-                // 分批入场
-                if(tp.pyramid&&tp.pyramid.enabled){
-                    document.getElementById('tradePlan').innerHTML+=`
-                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3450">
-                        <div style="font-size:11px;color:#f39c12;margin-bottom:4px">📊 金字塔加仓</div>
-                        <div style="font-size:10px;color:#8892b0;display:grid;grid-template-columns:1fr 1fr;gap:2px">
-                            <span>首仓50%: $${tp.pyramid.entry1.price}</span>
-                            <span>二仓30%: $${tp.pyramid.entry2.price}</span>
-                            <span>三仓20%: $${tp.pyramid.entry3.price}</span>
-                            <span>均价: $${tp.pyramid.avg_price}</span>
-                        </div>
-                    </div>`;
-                }
-                // 时间止损
-                if(tp.time_stop){
-                    document.getElementById('tradePlan').innerHTML+=`
-                    <div style="margin-top:6px;padding-top:6px;border-top:1px solid #2a3450">
-                        <div style="font-size:10px;color:#e74c3c">⏰ 时间止损: ${tp.time_stop.rule}</div>
-                    </div>`;
-                }
+                // 渲染独立的分批入场/时间止损卡片
+                renderPyramidCard(d);
             }
             
             // 更新高级信号
@@ -1372,6 +1354,87 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             {date:'每月',event:'美国PCE物价指数',impact:'高',note:'美联储首选通胀指标'},
             {date:'每周四',event:'美国初请失业金',impact:'中',note:'影响有限但需关注'},
         ];
+        
+        function renderPyramidCard(d){
+            const card=document.getElementById('pyramidCard');
+            const content=document.getElementById('pyramidContent');
+            const tp=d.trade_plan;
+            
+            if(tp.direction==='neutral'||!tp.pyramid||!tp.pyramid.enabled){
+                card.style.display='none';
+                return;
+            }
+            
+            card.style.display='block';
+            const p=tp.pyramid;
+            const ts=tp.time_stop;
+            const isLong=tp.direction==='long';
+            const color=isLong?'#2ecc71':'#e74c3c';
+            
+            // 计算每个入场位到现价的距离
+            const price=d.current_price;
+            const dist1=Math.abs(price-p.entry1.price)/p.entry1.price*100;
+            const dist2=Math.abs(price-p.entry2.price)/p.entry2.price*100;
+            const dist3=Math.abs(price-p.entry3.price)/p.entry3.price*100;
+            
+            content.innerHTML=`
+                <!-- 分批入场 -->
+                <div style="margin-bottom:12px">
+                    <div style="font-size:12px;color:#f39c12;font-weight:600;margin-bottom:8px">📊 金字塔加仓计划</div>
+                    <div style="background:#131a2b;border-radius:8px;padding:10px">
+                        <div style="display:grid;grid-template-columns:60px 1fr 80px 60px;gap:8px;align-items:center;font-size:10px;color:#525f7a;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #2a3450">
+                            <span>批次</span><span>入场价格</span><span>仓位</span><span>距离</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:60px 1fr 80px 60px;gap:8px;align-items:center;font-size:11px;margin-bottom:6px">
+                            <span style="color:${color};font-weight:700">首仓</span>
+                            <span style="color:#fff;font-weight:600">$${p.entry1.price.toLocaleString()}</span>
+                            <span style="color:#8892b0">${p.entry1.pct}%</span>
+                            <span style="color:${dist1<0.5?'#2ecc71':'#525f7a'}">${dist1.toFixed(2)}%</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:60px 1fr 80px 60px;gap:8px;align-items:center;font-size:11px;margin-bottom:6px">
+                            <span style="color:#f39c12;font-weight:700">二仓</span>
+                            <span style="color:#fff;font-weight:600">$${p.entry2.price.toLocaleString()}</span>
+                            <span style="color:#8892b0">${p.entry2.pct}%</span>
+                            <span style="color:${dist2<0.5?'#2ecc71':'#525f7a'}">${dist2.toFixed(2)}%</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:60px 1fr 80px 60px;gap:8px;align-items:center;font-size:11px;margin-bottom:8px">
+                            <span style="color:#e67e22;font-weight:700">三仓</span>
+                            <span style="color:#fff;font-weight:600">$${p.entry3.price.toLocaleString()}</span>
+                            <span style="color:#8892b0">${p.entry3.pct}%</span>
+                            <span style="color:${dist3<0.5?'#2ecc71':'#525f7a'}">${dist3.toFixed(2)}%</span>
+                        </div>
+                        <div style="padding-top:6px;border-top:1px solid #2a3450;font-size:10px;color:#8892b0">
+                            <div>平均成本: <span style="color:#fff;font-weight:600">$${p.avg_price.toLocaleString()}</span></div>
+                            <div style="margin-top:2px;color:#525f7a">${p.note}</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:6px;font-size:10px;color:#525f7a">
+                        💡 ${isLong?'价格回调到对应价位时加仓':'价格反弹到对应价位时加仓'}，距离<0.5%时变绿提示
+                    </div>
+                </div>
+                
+                <!-- 时间止损 -->
+                <div>
+                    <div style="font-size:12px;color:#e74c3c;font-weight:600;margin-bottom:8px">⏰ 时间止损规则</div>
+                    <div style="background:#131a2b;border-radius:8px;padding:10px">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
+                            <div style="text-align:center;padding:6px;background:#0e1421;border-radius:6px">
+                                <div style="font-size:16px;font-weight:800;color:#e74c3c">${ts.max_holding_bars}</div>
+                                <div style="font-size:10px;color:#525f7a">最大持仓K线</div>
+                            </div>
+                            <div style="text-align:center;padding:6px;background:#0e1421;border-radius:6px">
+                                <div style="font-size:16px;font-weight:800;color:#f39c12">${ts.max_holding_hours}h</div>
+                                <div style="font-size:10px;color:#525f7a">最大持仓时间</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:8px;font-size:10px;color:#8892b0;line-height:1.5">
+                            <div>📌 检查点: 持仓${ts.review_bars}根K线(${ts.review_hours}小时)检查一次</div>
+                            <div style="margin-top:2px">🚨 止损规则: ${ts.rule}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
         
         function renderEconomicEvents(){
             const el=document.getElementById('economicEvents');
