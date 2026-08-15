@@ -1405,13 +1405,21 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const card=document.getElementById('pyramidCard');
             const content=document.getElementById('pyramidContent');
             const tp=d.trade_plan;
-            
-            if(tp.direction==='neutral'||!tp.pyramid||!tp.pyramid.enabled){
-                card.style.display='none';
-                return;
-            }
+            const symbol=d.symbol.replace('-USDT-SWAP','');
+            const price=d.current_price;
             
             card.style.display='block';
+            
+            if(tp.direction==='neutral'||!tp.pyramid||!tp.pyramid.enabled){
+                content.innerHTML=`
+                    <div style="text-align:center;padding:20px 10px">
+                        <div style="font-size:13px;font-weight:700;color:#8892b0;margin-bottom:6px">${symbol} · 现价 $${price.toLocaleString()}</div>
+                        <div style="font-size:11px;color:#525f7a">当前无明确信号</div>
+                        <div style="font-size:10px;color:#525f7a;margin-top:4px">等待做多/做空信号出现</div>
+                    </div>
+                `;
+                return;
+            }
             const p=tp.pyramid;
             const ts=tp.time_stop;
             const isLong=tp.direction==='long';
