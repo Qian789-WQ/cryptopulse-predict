@@ -115,10 +115,10 @@
             <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
             <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
             <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
-            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 价格30s</button>
+            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 自动30s</button>
             <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
         </div>
-        <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">价格自动刷新: <span id="countdown">30</span>秒后 (点预测更新完整数据)</div>
+        <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">自动更新: <span id="countdown">30</span>秒后 (页面位置保持不变)</div>
         
         <!-- 计算器面板 -->
         <div id="calculatorPanel" style="display:none;background:#121827;border:1px solid #1a2340;border-radius:12px;padding:14px;margin-bottom:12px">
@@ -1103,12 +1103,14 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             }
         }
         
+        let isAutoUpdating=false;
+        
         function startAutoUpdate(){
             stopAutoUpdate();
             countdown=30;
             autoUpdateTimer=setInterval(()=>{
-                if(autoUpdateEnabled){
-                    updateCurrentPrice();
+                if(autoUpdateEnabled&&!isAutoUpdating){
+                    autoUpdatePredict();
                     updateLivePrices();
                     countdown=30;
                 }
@@ -1123,32 +1125,124 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             },1000);
         }
         
-        // 只更新当前价格，不刷新其他内容
-        async function updateCurrentPrice(){
+        // 自动更新：更新完整数据但保持页面位置
+        async function autoUpdatePredict(){
+            isAutoUpdating=true;
+            const scrollPos=window.scrollY;
+            const symbol=selectedSymbol;
+            const timeframe=document.getElementById('timeframe').value;
+            
             try{
-                const resp=await fetch(`/api/price?symbol=${selectedSymbol}`);
+                const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
                 const data=await resp.json();
                 if(!data.error){
-                    // 更新价格卡的价格
-                    const priceEl=document.getElementById('currentPrice');
-                    if(priceEl){
-                        const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||data.current_price;
-                        priceEl.textContent='$'+data.current_price.toLocaleString();
-                        // 价格变化动画
-                        if(data.current_price>oldPrice){
-                            priceEl.style.color='#2ecc71';
-                        }else if(data.current_price<oldPrice){
-                            priceEl.style.color='#e74c3c';
-                        }
-                        setTimeout(()=>{priceEl.style.color=''},1000);
-                    }
-                    // 更新currentData中的价格
-                    if(currentData){
-                        currentData.current_price=data.current_price;
-                    }
-                    livePrices[selectedSymbol]=data.current_price;
+                    currentData=data;
+                    // 静默更新数据，不显示loading，不滚动
+                    updatePageData(data);
                 }
             }catch(e){}
+            
+            // 恢复滚动位置
+            window.scrollTo(0, scrollPos);
+            isAutoUpdating=false;
+        }
+        
+        // 静默更新页面数据（不改变显示状态）
+        function updatePageData(d){
+            // 更新价格
+            const priceEl=document.getElementById('currentPrice');
+            if(priceEl){
+                const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||d.current_price;
+                priceEl.textContent='$'+d.current_price.toLocaleString();
+                if(d.current_price>oldPrice)priceEl.style.color='#2ecc71';
+                else if(d.current_price<oldPrice)priceEl.style.color='#e74c3c';
+                setTimeout(()=>{priceEl.style.color=''},1000);
+            }
+            document.getElementById('pctChange').textContent=(d.pct_change>=0?'+':'')+d.pct_change.toFixed(2)+'%';
+            document.getElementById('pctChange').style.color=d.pct_change>=0?'#2ecc71':'#e74c3c';
+            
+            // 更新评分
+            const scoreEl=document.getElementById('score');
+            if(scoreEl)scoreEl.textContent=d.score;
+            const signalEl=document.getElementById('signal');
+            if(signalEl){
+                signalEl.textContent=d.signal;
+                signalEl.style.color=d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
+            }
+            
+            // 更新指标
+            document.getElementById('rsiVal').textContent=d.rsi.toFixed(1);
+            document.getElementById('macdVal').textContent=d.macd.macd_hist.toFixed(4);
+            document.getElementById('bbVal').textContent=d.bollinger.position;
+            document.getElementById('volVal').textContent=d.vol_ratio.toFixed(1)+'x';
+            document.getElementById('atrVal').textContent='$'+d.atr.toFixed(2);
+            document.getElementById('adxVal').textContent=d.adx.toFixed(1);
+            document.getElementById('momVal').textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
+            document.getElementById('winRateVal').textContent=d.win_rate+'%';
+            document.getElementById('leverageVal').textContent=d.leverage.recommended_leverage+'x';
+            document.getElementById('fundingVal').textContent=d.funding_rate.rate+'%';
+            if(d.fear_greed){
+                document.getElementById('fearGreedVal').textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
+            }
+            
+            // 更新预测
+            document.getElementById('trendText').textContent=d.prediction.trend;
+            document.getElementById('predPrices').innerHTML=d.prediction.forecast.map((p,i)=>
+                `<div style="text-align:center"><div style="font-size:10px;color:#525f7a">+${i+1}根</div><div style="font-weight:700">$${p.toFixed(2)}</div></div>`
+            ).join('');
+            
+            // 更新交易计划（如果有信号）
+            if(d.trade_plan.direction!=='neutral'){
+                const tp=d.trade_plan;
+                document.getElementById('tradePlan').innerHTML=`
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+                        <div>方向: <strong style="color:${tp.direction==='long'?'#2ecc71':'#e74c3c'}">${tp.direction_text}</strong></div>
+                        <div>盈亏比: <strong>1:${tp.risk_reward}</strong></div>
+                        <div>入场: <strong>$${tp.entry.toFixed(2)}</strong></div>
+                        <div>止损: <strong style="color:#e74c3c">$${tp.stop_loss.toFixed(2)}</strong></div>
+                        <div>TP1(平${tp.tp1_close_pct}%): <strong style="color:#2ecc71">$${tp.tp1.toFixed(2)}</strong></div>
+                        <div>TP2(平${tp.tp2_close_pct}%): <strong style="color:#2ecc71">$${tp.tp2.toFixed(2)}</strong></div>
+                        <div>TP3(平${tp.tp3_close_pct}%): <strong style="color:#2ecc71">$${tp.tp3.toFixed(2)}</strong></div>
+                        <div>仓位: <strong>${tp.position_pct}%</strong></div>
+                    </div>
+                    <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
+                `;
+            }
+            
+            // 更新高级信号
+            let advHtml='';
+            if(d.divergence.has_divergence){
+                advHtml+=`<div style="color:${d.divergence.type==='bullish'?'#2ecc71':'#e74c3c'}">📊 ${d.divergence.type==='bullish'?'看涨':'看跌'}背离 (${d.divergence.indicator})</div>`;
+            }
+            if(d.fake_breakout.is_fake){
+                advHtml+=`<div style="color:#f39c12">⚠️ ${d.fake_breakout.text}</div>`;
+            }
+            if(d.candlestick.count>0){
+                advHtml+=`<div style="color:#8892b0">🕯️ ${d.candlestick.patterns.map(p=>p.name).join(', ')}</div>`;
+            }
+            if(d.streak.up_streak>=3){
+                advHtml+=`<div style="color:#e74c3c">🔥 连涨${d.streak.up_streak}根，注意回调</div>`;
+            }
+            if(d.streak.down_streak>=3){
+                advHtml+=`<div style="color:#2ecc71">❄️ 连跌${d.streak.down_streak}根，注意反弹</div>`;
+            }
+            if(!advHtml)advHtml='<div style="color:#525f7a">暂无特殊信号</div>';
+            document.getElementById('advancedSignals').innerHTML=advHtml;
+            
+            // 更新操作建议
+            document.getElementById('adviceText').textContent=d.advice;
+            
+            // 更新按钮状态
+            const orderBtn=document.getElementById('placeOrderBtn');
+            const closeBtn=document.getElementById('closeOrderBtn');
+            const orders=getOrders();
+            const hasOpenOrder=orders.some(o=>o.status==='open'&&o.symbol===d.symbol);
+            if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder){
+                orderBtn.style.display='inline-block';
+            }else{
+                orderBtn.style.display='none';
+            }
+            closeBtn.style.display=hasOpenOrder?'inline-block':'none';
         }
         
         function stopAutoUpdate(){
