@@ -248,7 +248,7 @@
             </div>
             <!-- 回测结果面板 -->
             <div class="card" id="backtestPanel" style="display:none;margin-bottom:12px">
-                <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📊 历史回测结果 <button onclick="clearBacktest()" style="padding:4px 10px;background:#e74c3c;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">清除结果</button></div>
+                <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📊 历史回测结果 <span><button onclick="clearBacktest()" style="padding:4px 10px;background:#e74c3c;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer;margin-right:6px">清除</button><button onclick="closeBacktest()" style="padding:4px 10px;background:#525f7a;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">✕ 关闭</button></span></div>
                 <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
                     <span style="font-size:11px;color:#8892b0">初始资金:</span>
                     <input type="number" id="backtestCapital" value="1000" style="width:100px;padding:5px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px">
@@ -1199,6 +1199,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 localStorage.removeItem('cp_backtest_result');
                 document.getElementById('backtestResult').innerHTML='<div style="text-align:center;padding:20px;color:#525f7a">点击"开始回测"查看策略表现</div>';
             }
+        }
+        
+        function closeBacktest(){
+            document.getElementById('backtestPanel').style.display='none';
         }
         
         // 页面加载时恢复回测结果
