@@ -48,7 +48,7 @@ warnings.filterwarnings('ignore')
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
 app.secret_key = os.environ.get("SECRET_KEY", "cryptopulse_secret_key_2024")
-ACCESS_PASSWORD = os.environ.get("ACCESS_PASSWORD", "crypto2024")
+ACCESS_PASSWORD = os.environ.get("ACCESS_PASSWORD", "fuqian42")
 
 
 # 支持的交易对
