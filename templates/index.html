@@ -160,7 +160,7 @@
                     <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">💰 利润计算器</div>
                     <div style="display:grid;gap:6px">
                         <div style="display:flex;gap:6px"><input type="number" id="profEntry" placeholder="入场价" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><input type="number" id="profExit" placeholder="平仓价" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"></div>
-                        <div style="display:flex;gap:6px"><input type="number" id="profSize" placeholder="仓位(USDT)" value="100" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><input type="number" id="profLev" placeholder="杠杆" value="20" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><button onclick="calcProfit()" style="padding:6px 12px;background:#2ecc71;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">计算</button></div>
+                        <div style="display:flex;gap:6px"><select id="profDir" style="padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><option value="long">做多</option><option value="short">做空</option></select><input type="number" id="profSize" placeholder="仓位(USDT)" value="100" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><input type="number" id="profLev" placeholder="杠杆" value="20" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><button onclick="calcProfit()" style="padding:6px 12px;background:#2ecc71;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">计算</button></div>
                         <div id="profResult" style="padding:8px;background:#0e1421;border-radius:5px;font-size:12px;display:none"></div>
                     </div>
                 </div>
@@ -195,44 +195,6 @@
         <div class="error" id="error"></div>
         <div class="alert alert-warning" id="lossAlert"></div>
         <div class="result" id="result">
-            <!-- 工具面板 -->
-            <div class="card" id="toolsPanel" style="display:none;margin-bottom:12px">
-                <div class="card-title">🧮 交易工具</div>
-                <div class="grid-2" style="margin-bottom:0">
-                    <div>
-                        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#667eea">爆仓价格计算器</div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
-                            <input type="number" id="liqPrice" placeholder="入场价" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                            <select id="liqSide" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px"><option value="long">做多</option><option value="short">做空</option></select>
-                            <input type="number" id="liqLeverage" placeholder="杠杆倍数" value="20" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                            <button onclick="calcLiquidation()" style="padding:6px;background:#667eea;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">计算</button>
-                        </div>
-                        <div id="liqResult" style="font-size:12px;color:#8892b0"></div>
-                    </div>
-                    <div>
-                        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#667eea">利润计算器</div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
-                            <input type="number" id="profitEntry" placeholder="入场价" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                            <input type="number" id="profitExit" placeholder="平仓价" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                            <input type="number" id="profitSize" placeholder="仓位USDT" value="100" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                            <input type="number" id="profitLeverage" placeholder="杠杆" value="20" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                        </div>
-                        <button onclick="calcProfit()" style="width:100%;padding:6px;background:#667eea;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer;margin-bottom:6px">计算利润</button>
-                        <div id="profitResult" style="font-size:12px;color:#8892b0"></div>
-                    </div>
-                </div>
-                <!-- 价格提醒 -->
-                <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1a2340">
-                    <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#667eea">🔔 价格提醒</div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap">
-                        <input type="number" id="alertPrice" placeholder="目标价格" style="flex:1;min-width:120px;padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px">
-                        <select id="alertType" style="padding:6px;background:#131a2b;border:1px solid #1e2a45;border-radius:5px;color:#fff;font-size:12px"><option value="above">价格高于</option><option value="below">价格低于</option></select>
-                        <button onclick="setPriceAlert()" style="padding:6px 12px;background:#2ecc71;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">设置提醒</button>
-                        <button onclick="clearAlerts()" style="padding:6px 12px;background:#e74c3c;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">清除</button>
-                    </div>
-                    <div id="alertList" style="margin-top:8px;font-size:11px"></div>
-                </div>
-            </div>
             <!-- 历史面板 -->
             <div class="card" id="historyPanel" style="display:none;margin-bottom:12px">
                 <div class="card-title">📈 历史记录
@@ -370,6 +332,7 @@
             document.getElementById('symbolSearch').value = name;
             document.getElementById('symbol').value = id;
             hideDropdown();
+            if(wsConnected)subscribeSymbol(id);
         }
         function getHistory(){try{return JSON.parse(localStorage.getItem('cp_history')||'[]')}catch(e){return[]}}
         function saveHistory(r){const h=getHistory();h.push({...r,t:Date.now()});if(h.length>50)h.shift();localStorage.setItem('cp_history',JSON.stringify(h))}
@@ -393,6 +356,7 @@
                 document.getElementById('atrVal').textContent='$'+d.atr.toFixed(2);
                 document.getElementById('momVal').textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
                 document.getElementById('momVal').className='value '+(d.prediction.momentum>=0?'green':'red');
+                document.getElementById('momValBadge').textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
                 const fr=d.funding_rate,fe=document.getElementById('fundVal');fe.textContent=fr.rate_text;fe.className='value '+(fr.rate>0?'green':fr.rate<0?'red':'');
                 const sc=d.score,scEl=document.getElementById('scoreCircle');scEl.style.setProperty('--score',sc);
                 let col='#f39c12';if(sc>=70)col='#2ecc71';else if(sc>=55)col='#58d68d';else if(sc>=45)col='#f39c12';else if(sc>=30)col='#e67e22';else col='#e74c3c';
@@ -511,7 +475,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 
                 // 保存预测记录
                 savePredictionResult(d);
+                if(fearGreedData)d.fear_greed=fearGreedData;
                 currentData=d;
+                updateScoreDetail(d);
                 
                 // 渲染补仓/平仓提醒卡片
                 try{renderPyramidCard(d)}catch(e){console.log('renderPyramidCard error:',e)}
@@ -553,7 +519,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const price=parseFloat(document.getElementById('liqPrice').value);
             const leverage=parseFloat(document.getElementById('liqLeverage').value);
             const dir=document.getElementById('liqDir').value;
-            if(!price||!leverage){document.getElementById('liqResult').style.display='none';return}
+            if(!Number.isFinite(price)||price<=0||!Number.isFinite(leverage)||leverage<=1){alert('请输入有效价格，杠杆需大于1');return}
             // 简化公式：维持保证金率约0.5%
             const mmr=0.005;
             let liqPrice;
@@ -564,7 +530,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             }
             const r=document.getElementById('liqResult');
             r.style.display='block';
-            r.innerHTML=`<span class="red">强平价格：$${liqPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><br><span style="color:#525f7a">跌幅 ${((price-liqPrice)/price*100).toFixed(2)}% 爆仓</span>`;
+            const movePct=Math.abs(liqPrice-price)/price*100;
+            r.innerHTML=`<span class="red">强平价格：$${liqPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><br><span style="color:#525f7a">${dir==='long'?'下跌':'上涨'} ${movePct.toFixed(2)}% 爆仓</span>`;
         }
         
         // 利润计算
@@ -573,9 +540,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const exit=parseFloat(document.getElementById('profExit').value);
             const size=parseFloat(document.getElementById('profSize').value);
             const lev=parseFloat(document.getElementById('profLev').value);
-            if(!entry||!exit||!size||!lev){document.getElementById('profResult').style.display='none';return}
-            const pnl=(exit-entry)/entry*size*lev;
-            const pnlPct=(exit-entry)/entry*100*lev;
+            const dir=document.getElementById('profDir').value;
+            if(!Number.isFinite(entry)||entry<=0||!Number.isFinite(exit)||exit<=0||!Number.isFinite(size)||size<=0||!Number.isFinite(lev)||lev<=0){alert('请输入有效的正数参数');return}
+            const direction=dir==='long'?1:-1;
+            const pnl=(exit-entry)/entry*size*lev*direction;
+            const pnlPct=(exit-entry)/entry*100*lev*direction;
             const r=document.getElementById('profResult');
             r.style.display='block';
             const color=pnl>=0?'green':'red';
@@ -583,7 +552,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         }
         
         // 价格提醒
-        let priceAlerts=JSON.parse(localStorage.getItem('cp_alerts')||'[]');
+        let priceAlerts=[];
+        try{priceAlerts=JSON.parse(localStorage.getItem('cp_alerts')||'[]')}catch(e){localStorage.removeItem('cp_alerts')}
         function setPriceAlert(){
             const price=parseFloat(document.getElementById('alertPrice').value);
             const dir=document.getElementById('alertDir').value;
@@ -705,7 +675,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         
         // 下单记录
         let currentHistoryTab='predictions';
-        function getOrders(){return JSON.parse(localStorage.getItem('cp_orders')||'[]')}
+        function getOrders(){try{return JSON.parse(localStorage.getItem('cp_orders')||'[]')}catch(e){return[]}}
         function saveOrders(orders){localStorage.setItem('cp_orders',JSON.stringify(orders))}
         
         function quickCloseOrder(){
@@ -715,10 +685,12 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const order=openOrders[0];
             const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, currentData?currentData.current_price:order.entry);
             if(!price)return;
-            const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
+            const closePrice=parseFloat(price);
+            if(!Number.isFinite(closePrice)||closePrice<=0){alert('请输入有效的平仓价格');return}
+            const pnlPct=order.direction==='long'?(closePrice-order.entry)/order.entry*100:(order.entry-closePrice)/order.entry*100;
             const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
             order.status='closed';
-            order.close_price=parseFloat(price);
+            order.close_price=closePrice;
             order.close_time=new Date().toISOString();
             order.close_time_str=new Date().toLocaleString('zh-CN');
             order.pnl=Math.round(pnl*100)/100;
@@ -1237,10 +1209,12 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         }
         
         // 加载恐慌贪婪指数
+        let fearGreedData=null;
         async function loadFearGreed(){
             try{
                 const resp=await fetch('/api/fear-greed');
                 const data=await resp.json();
+                fearGreedData=data;
                 // 保存到currentData，供predict显示
                 if(currentData){
                     currentData.fear_greed = data;
@@ -1306,7 +1280,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                     </div>
-                    <div style="font-size:11px;color:#525f7a">回测周期: 近${data.days}天 · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                    <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days}天 / 请求${data.days}天 · ${data.bars_count}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
                 `;
                 // 保存回测结果
                 localStorage.setItem('cp_backtest_result', JSON.stringify(data));
@@ -1343,7 +1317,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                         </div>
-                        <div style="font-size:11px;color:#525f7a">回测周期: 近${data.days}天 · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                        <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days??data.days}天 / 请求${data.days}天 · ${data.bars_count??'--'}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
                     `;
                 }catch(e){}
             }
@@ -1403,7 +1377,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             try{
                 const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
                 const data=await resp.json();
-                if(!data.error){
+                if(!data.error&&symbol===selectedSymbol&&timeframe===document.getElementById('timeframe').value){
+                    if(fearGreedData)data.fear_greed=fearGreedData;
                     currentData=data;
                     // 静默更新数据，不显示loading，不滚动
                     updatePageData(data);
@@ -1447,6 +1422,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             if(adxEl)adxEl.textContent=d.adx.toFixed(1);
             const momEl=document.getElementById('momVal');
             if(momEl)momEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
+            const momBadgeEl=document.getElementById('momValBadge');
+            if(momBadgeEl)momBadgeEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
             const winEl=document.getElementById('winRateVal');
             if(winEl)winEl.textContent=d.win_rate+'%';
             const levEl=document.getElementById('levVal');
@@ -1476,8 +1453,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <div>TP3(平${tp.tp3_close_pct}%): <strong style="color:#2ecc71">$${tp.tp3.toFixed(2)}</strong></div>
                         <div>仓位: <strong>${tp.position_pct}%</strong></div>
                     </div>
-                    <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.rule}</div>
+                    <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.note}</div>
                 `;
+            }else{
+                document.getElementById('tradePlan').innerHTML=`<div style="text-align:center;color:#f39c12;padding:16px">${d.trade_plan.message}</div>`;
             }
             
             // 渲染补仓/平仓提醒卡片（总是调用）
@@ -1564,7 +1543,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 const distSl=Math.abs(price-openOrder.stop_loss)/openOrder.stop_loss*100;
                 
                 const holdHours=(Date.now()-new Date(openOrder.time).getTime())/3600000;
-                const maxHours=openOrder.time_stop?openOrder.time_stop.max_holding_hours:24;
+                const maxHours=openOrder.time_stop&&openOrder.time_stop.max_holding_minutes
+                    ? openOrder.time_stop.max_holding_minutes/60 : 24;
                 
                 content.innerHTML=`
                     <div style="font-size:12px;font-weight:700;color:${color};margin-bottom:8px;text-align:center;padding-bottom:6px;border-bottom:1px solid #2a3450">

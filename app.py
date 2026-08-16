@@ -3,10 +3,12 @@
 CryptoPulse 价格预测网站 - Flask后端
 """
 from flask import Flask, render_template, jsonify, request, session, redirect, url_for
+from functools import wraps
+from hmac import compare_digest
 import requests
 import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import hashlib
 import os
@@ -159,7 +161,6 @@ SYMBOLS = [
     {"id": "CHZ-USDT-SWAP", "name": "CHZ 粉丝币"},
     {"id": "BAT-USDT-SWAP", "name": "BAT 注意力币"},
     {"id": "ZIL-USDT-SWAP", "name": "ZIL Zilliqa"},
-    {"id": "ENJ-USDT-SWAP", "name": "ENJ Enjin"},
     {"id": "WAVES-USDT-SWAP", "name": "WAVES 波浪"},
     {"id": "KAVA-USDT-SWAP", "name": "KAVA Kava"},
     {"id": "ROSE-USDT-SWAP", "name": "ROSE 绿洲"},
@@ -187,8 +188,7 @@ SYMBOLS = [
     {"id": "JTO-USDT-SWAP", "name": "JTO Jito"},
     {"id": "STRK-USDT-SWAP", "name": "STRK Starknet"},
     {"id": "DYM-USDT-SWAP", "name": "DYM Dymension"},
-    {"id": "Pyth-USDT-SWAP", "name": "PYTH Pyth"},
-    {"id": "JUP-USDT-SWAP", "name": "JUP Jupiter"},
+    {"id": "PYTH-USDT-SWAP", "name": "PYTH Pyth"},
     {"id": "WLD-USDT-SWAP", "name": "WLD Worldcoin"},
     {"id": "PIXEL-USDT-SWAP", "name": "PIXEL Pixel"},
     {"id": "PORTAL-USDT-SWAP", "name": "PORTAL Portal"},
@@ -270,7 +270,6 @@ SYMBOLS = [
     {"id": "IQ-USDT-SWAP", "name": "IQ 爱奇艺"},
     {"id": "HUYA-USDT-SWAP", "name": "HUYA 虎牙"},
     {"id": "DOYU-USDT-SWAP", "name": "DOYU 斗鱼"},
-    {"id": "YMM-USDT-SWAP", "name": "YMM 满帮"},
     {"id": "TAL-USDT-SWAP", "name": "TAL 好未来"},
     {"id": "EDU-USDT-SWAP", "name": "EDU 新东方"},
     {"id": "ZTO-USDT-SWAP", "name": "ZTO 中通快递"},
@@ -306,10 +305,25 @@ TIMEFRAMES = [
     {"id": "1M", "name": "1月"},
 ]
 
+SYMBOL_IDS = {item["id"] for item in SYMBOLS}
+TIMEFRAME_IDS = {item["id"] for item in TIMEFRAMES}
+
+
+def get_market_params():
+    """Validate user supplied market parameters before calling OKX."""
+    symbol = request.args.get("symbol", "BTC-USDT-SWAP")
+    timeframe = request.args.get("timeframe", "1H")
+    if symbol not in SYMBOL_IDS:
+        return None, None, (jsonify({"error": "不支持的交易品种"}), 400)
+    if timeframe not in TIMEFRAME_IDS:
+        return None, None, (jsonify({"error": "不支持的时间周期"}), 400)
+    return symbol, timeframe, None
+
 def fetch_klines(symbol, timeframe, limit=500):
     """从OKX获取K线数据"""
     url = "https://www.okx.com/api/v5/market/candles"
-    params = {"instId": symbol, "bar": timeframe, "limit": str(limit)}
+    # OKX candles endpoint returns at most 300 records per request.
+    params = {"instId": symbol, "bar": timeframe, "limit": str(min(max(int(limit), 1), 300))}
     
     try:
         resp = requests.get(url, params=params, timeout=15)
@@ -317,15 +331,53 @@ def fetch_klines(symbol, timeframe, limit=500):
         if data.get("code") != "0":
             return None, data.get("msg", "API错误")
         
-        candles = data["data"][::-1]
-        df = pd.DataFrame(candles, columns=["timestamp","open","high","low","close","volume","volCcy","volCcyQuote","confirm"])
+        return candles_to_dataframe(data["data"]), None
+    except Exception as e:
+        return None, str(e)
+
+
+def candles_to_dataframe(candles):
+    """Normalize OKX newest-first candle arrays into chronological rows."""
+    candles = sorted(candles, key=lambda row: int(row[0]))
+    df = pd.DataFrame(candles, columns=["timestamp","open","high","low","close","volume","volCcy","volCcyQuote","confirm"])
+    if not df.empty:
         df["timestamp"] = df["timestamp"].astype(int)
         df["open"] = df["open"].astype(float)
         df["high"] = df["high"].astype(float)
         df["low"] = df["low"].astype(float)
         df["close"] = df["close"].astype(float)
         df["volume"] = df["volume"].astype(float)
-        return df, None
+    return df
+
+
+def fetch_history_klines(symbol, timeframe, limit):
+    """Fetch multiple OKX history pages, capped to keep a web request bounded."""
+    target = min(max(int(limit), 1), 3000)
+    url = "https://www.okx.com/api/v5/market/history-candles"
+    rows = {}
+    after = None
+    try:
+        while len(rows) < target:
+            page_limit = min(300, target - len(rows))
+            params = {"instId": symbol, "bar": timeframe, "limit": str(page_limit)}
+            if after is not None:
+                params["after"] = str(after)
+            resp = fetch_with_retry(url, params=params, retries=2, timeout=15)
+            if resp is None:
+                return None, "OKX历史K线请求失败"
+            payload = resp.json()
+            if payload.get("code") != "0":
+                return None, payload.get("msg", "API错误")
+            page = payload.get("data") or []
+            if not page:
+                break
+            for row in page:
+                rows[int(row[0])] = row
+            oldest = min(int(row[0]) for row in page)
+            if after == oldest or len(page) < page_limit:
+                break
+            after = oldest
+        return candles_to_dataframe(list(rows.values())[-target:]), None
     except Exception as e:
         return None, str(e)
 
@@ -337,6 +389,7 @@ def calc_indicators(df):
     volume = df["volume"]
     
     df["ma7"] = close.rolling(7).mean()
+    df["ma20"] = close.rolling(20).mean()
     df["ma21"] = close.rolling(21).mean()
     df["ma50"] = close.rolling(50).mean()
     
@@ -558,7 +611,8 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
     # 周期对应的分钟数
     tf_minutes = {
         "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-        "1H": 60, "2H": 120, "4H": 240, "6H": 360, "12H": 720, "1D": 1440
+        "1H": 60, "2H": 120, "4H": 240, "6H": 360, "8H": 480,
+        "12H": 720, "1D": 1440, "3D": 4320, "1W": 10080, "1M": 43200
     }
     tf_min = tf_minutes.get(timeframe, 60)
     
@@ -628,7 +682,9 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
             "direction_text": "观望",
             "entry": None, "stop_loss": None,
             "tp1": None, "tp2": None, "tp3": None,
-            "position_size": 0, "risk_reward": 0,
+            "position_size": 0, "position_pct": 0, "risk_reward": 0,
+            "signal_strength": "none", "strength_text": "无交易信号",
+            "pyramid": {"enabled": False}, "time_stop": {"enabled": False},
             "message": "信号不明确，建议观望"
         }
     
@@ -675,6 +731,29 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
     
     # 限制最大仓位不超过200%（2倍杠杆）
     position_pct = min(position_pct, 200)
+    position_size = round(account_size * position_pct / 100, 2)
+
+    score_distance = abs(score - 50)
+    if score_distance >= 20:
+        signal_strength, strength_text = "strong", "强信号"
+    elif score_distance >= 10:
+        signal_strength, strength_text = "medium", "中等信号"
+    else:
+        signal_strength, strength_text = "weak", "弱信号"
+
+    entry2 = entry - atr * 0.5 if direction == "long" else entry + atr * 0.5
+    entry3 = entry - atr if direction == "long" else entry + atr
+    pyramid = {
+        "enabled": True,
+        "entry1": {"price": round(entry, 2), "pct": 50},
+        "entry2": {"price": round(entry2, 2), "pct": 30},
+        "entry3": {"price": round(entry3, 2), "pct": 20},
+    }
+    time_stop = {
+        "enabled": True,
+        "max_candles": 5,
+        "rule": "持仓5根K线仍未到TP1，重新评估并考虑平仓",
+    }
     
     return {
         "direction": direction,
@@ -692,6 +771,10 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
         "risk_reward": risk_reward,
         "risk_amount": round(risk_amount, 2),
         "atr_sl_mult": atr_sl_mult,
+        "signal_strength": signal_strength,
+        "strength_text": strength_text,
+        "pyramid": pyramid,
+        "time_stop": time_stop,
         "message": f"{direction_text}，盈亏比1:{risk_reward}"
     }
 
@@ -994,7 +1077,7 @@ def get_consecutive_streak(df):
 
 def check_time_filter():
     """时间过滤"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     weekday = now.weekday()
     hour = now.hour
     is_weekend = weekday >= 5
@@ -1002,7 +1085,7 @@ def check_time_filter():
     if is_weekend:
         return {"is_bad_time": True, "reason": "周末流动性低，建议观望", "level": "high"}
     elif is_low_vol:
-        return {"is_bad_time": True, "reason": "亚洲深夜低波动时段，建议观望", "level": "medium"}
+        return {"is_bad_time": True, "reason": "UTC 21:00-06:00低活跃时段，建议降低仓位", "level": "medium"}
     return {"is_bad_time": False, "reason": "交易时段正常", "level": "low"}
 
 def calc_dynamic_leverage(atr, current_price, adx):
@@ -1047,12 +1130,10 @@ def calc_trailing_stop(plan, current_price):
 def estimate_win_rate(score, adx, has_divergence, fake_breakout, streak):
     """估算胜率"""
     base_rate = 50
-    if score >= 70: base_rate += 15
-    elif score >= 60: base_rate += 10
-    elif score >= 55: base_rate += 5
-    elif score <= 30: base_rate -= 15
-    elif score <= 40: base_rate -= 10
-    elif score <= 45: base_rate -= 5
+    conviction = abs(score - 50)
+    if conviction >= 30: base_rate += 15
+    elif conviction >= 20: base_rate += 10
+    elif conviction >= 5: base_rate += 5
     if adx > 30: base_rate += 8
     elif adx < 20: base_rate -= 5
     if has_divergence: base_rate -= 10
@@ -1075,11 +1156,13 @@ def calc_kelly_position(win_rate, risk_reward, account_size=1000):
 
 
 def login_required(f):
+    @wraps(f)
     def wrapper(*args, **kwargs):
         if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "登录已过期，请重新登录"}), 401
             return redirect(url_for("login_page"))
         return f(*args, **kwargs)
-    wrapper.__name__ = f.__name__
     return wrapper
 
 @app.route("/login")
@@ -1090,9 +1173,9 @@ def login_page():
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     password = data.get("password", "")
-    if password == ACCESS_PASSWORD:
+    if compare_digest(str(password), ACCESS_PASSWORD):
         session["logged_in"] = True
         session.permanent = True
         return jsonify({"success": True})
@@ -1109,10 +1192,13 @@ def index():
     return render_template("index.html", symbols=SYMBOLS, timeframes=TIMEFRAMES)
 
 @app.route("/api/price")
+@login_required
 def api_price():
     """轻量级：只返回当前价格，不计算指标"""
     try:
-        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
+        symbol, _, validation_error = get_market_params()
+        if validation_error:
+            return validation_error
         df, error = fetch_klines(symbol, "1m", 2)
         if error or df is None or len(df) == 0:
             return jsonify({"error": "获取价格失败"})
@@ -1129,8 +1215,9 @@ def api_price():
 @login_required
 def api_predict():
     try:
-        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
-        timeframe = request.args.get("timeframe", "1H")
+        symbol, timeframe, validation_error = get_market_params()
+        if validation_error:
+            return validation_error
         
         df, error = fetch_klines(symbol, timeframe, 500)
         if error:
@@ -1162,6 +1249,12 @@ def api_predict():
         
         ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
         tp = calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol)
+        if tp["direction"] != "neutral":
+            tp["time_stop"]["max_holding_minutes"] = {
+                "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
+                "1H": 300, "2H": 600, "4H": 1200, "6H": 1800, "8H": 2400,
+                "12H": 3600, "1D": 7200, "3D": 21600, "1W": 50400, "1M": 216000,
+            }.get(timeframe, 300)
         
         # 新增交易员级分析
         divergence = detect_divergence(df)
@@ -1191,9 +1284,9 @@ def api_predict():
             adx_note = f"ADX={adx_val:.0f}强趋势，"
         
         if tp["direction"] == "long":
-            advice = f"{adx_note}可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（+3%平30%），TP2 ${tp['tp2']:,.2f}（+4%平30%），TP3 ${tp['tp3']:,.2f}（+5%平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，预估胜率{win_rate}%"
+            advice = f"{adx_note}可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，模型估算胜率{win_rate}%"
         elif tp["direction"] == "short":
-            advice = f"{adx_note}可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（-3%平30%），TP2 ${tp['tp2']:,.2f}（-4%平30%），TP3 ${tp['tp3']:,.2f}（-5%平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，预估胜率{win_rate}%"
+            advice = f"{adx_note}可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，模型估算胜率{win_rate}%"
         else:
             advice = f"信号不明确，趋势{trend}，ADX={adx_val:.0f}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
         
@@ -1291,7 +1384,7 @@ def api_predict():
             "reasons": reasons,
             "support_resistance": sr,
             "holding_time": ht,
-            "trade_plan": calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol),
+            "trade_plan": tp,
             "multi_tf": analyze_multi_timeframe(symbol, timeframe),
             "funding_rate": get_funding_rate(symbol),
             "fib_levels": calc_fibonacci_and_levels(df),
@@ -1316,11 +1409,14 @@ def api_predict():
 
 
 @app.route("/api/scan")
+@login_required
 def api_scan():
     """批量扫描前N个币种"""
     try:
-        limit = int(request.args.get("limit", 50))
-        timeframe = request.args.get("timeframe", "1H")
+        limit = max(1, min(int(request.args.get("limit", 50)), 50))
+        _, timeframe, validation_error = get_market_params()
+        if validation_error and timeframe is None:
+            return validation_error
         symbols = SYMBOLS[:limit]
         
         results = []
@@ -1379,19 +1475,27 @@ def check_multi_tf_confirmation(symbol, timeframe):
 
 
 @app.route("/api/backtest")
+@login_required
 def api_backtest():
     """历史回测"""
     try:
-        symbol = request.args.get("symbol", "BTC-USDT-SWAP")
-        timeframe = request.args.get("timeframe", "1H")
-        days = int(request.args.get("days", 30))
+        symbol, timeframe, validation_error = get_market_params()
+        if validation_error:
+            return validation_error
+        days = max(1, min(int(request.args.get("days", 30)), 90))
         initial_balance = float(request.args.get("capital", 1000))
+        if not np.isfinite(initial_balance) or initial_balance <= 0:
+            return jsonify({"error": "初始资金必须大于0"}), 400
         
-        # 获取历史数据
-        limit = min(days * 24, 500) if timeframe == "1H" else 500
-        df, error = fetch_klines(symbol, timeframe, limit)
-        if error or df is None or len(df) < 100:
-            return jsonify({"error": "数据不足"})
+        bars_per_day = {
+            "1m": 1440, "3m": 480, "5m": 288, "15m": 96, "30m": 48,
+            "1H": 24, "2H": 12, "4H": 6, "6H": 4, "8H": 3, "12H": 2,
+            "1D": 1, "3D": 1 / 3, "1W": 1 / 7, "1M": 1 / 30,
+        }
+        requested_bars = max(60, int(np.ceil(days * bars_per_day[timeframe])) + 55)
+        df, error = fetch_history_klines(symbol, timeframe, requested_bars)
+        if error or df is None or len(df) < 60:
+            return jsonify({"error": f"数据不足: {error or '至少需要60根K线'}"})
         
         df = calc_indicators(df)
         
@@ -1448,7 +1552,8 @@ def api_backtest():
                     # 用10%仓位
                     trade_pnl = balance * 0.1 * pnl_pct * 10  # 10倍杠杆
                     balance += trade_pnl
-                    trades.append({"side": position["side"], "entry": position["entry"], "exit": current_price, "pnl_pct": round(pnl_pct*100, 2), "pnl": round(trade_pnl, 2), "balance": round(balance, 2)})
+                    exit_price = position["stop_loss"] if pnl_pct < 0 else position["tp"]
+                    trades.append({"side": position["side"], "entry": position["entry"], "exit": exit_price, "pnl_pct": round(pnl_pct*100, 2), "pnl": round(trade_pnl, 2), "balance": round(balance, 2)})
                     position = None
                     
                     if balance > max_balance:
@@ -1462,6 +1567,7 @@ def api_backtest():
         win_rate = len(wins) / len(trades) * 100 if trades else 0
         total_pnl = balance - initial_balance
         total_pnl_pct = total_pnl / initial_balance * 100
+        actual_days = max(0, (int(df["timestamp"].iloc[-1]) - int(df["timestamp"].iloc[50])) / 86400000)
         
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
         avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
@@ -1471,6 +1577,9 @@ def api_backtest():
             "symbol": symbol,
             "timeframe": timeframe,
             "days": days,
+            "actual_days": round(actual_days, 1),
+            "bars_count": len(df),
+            "history_truncated": requested_bars > 3000,
             "initial_balance": initial_balance,
             "final_balance": round(balance, 2),
             "total_pnl": round(total_pnl, 2),
@@ -1490,10 +1599,11 @@ def api_backtest():
 
 
 @app.route("/api/wechat-push", methods=["POST"])
+@login_required
 def api_wechat_push():
     """微信推送（Server酱）"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         sendkey = data.get("sendkey", "")
         title = data.get("title", "CryptoPulse提醒")
         desp = data.get("desp", "")
@@ -1519,6 +1629,7 @@ def api_wechat_push():
 
 
 @app.route("/api/fear-greed")
+@login_required
 def api_fear_greed():
     """获取恐慌贪婪指数"""
     try:
