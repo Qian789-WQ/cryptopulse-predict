@@ -496,14 +496,21 @@
                 const maxMinutes=order.time_stop&&Number(order.time_stop.max_holding_minutes);
                 const timedOut=Number.isFinite(maxMinutes)&&heldMinutes>=maxMinutes&&!tp1Reached;
                 const realized=Number(order.realized_pnl||0);
-                const commonMeta=[['持仓',`${symbol} ${order.direction_text} · 剩余${order.remaining_exit_pct??100}%`],['标记/现价',decisionPrice(marketPrice)],['持仓均价',decisionPrice(order.entry)],['预估总盈亏',`${netPnl+realized>=0?'+':''}${(netPnl+realized).toFixed(2)} USDT`]];
+                const currentMargin=marginForNotional(order,notional);
+                const stopGrossPct=(isLong?(order.stop_loss-order.entry):(order.entry-order.stop_loss))/order.entry*100;
+                const expectedStopPnl=stopGrossPct/100*notional-orderRoundtripCost(order)+realized;
+                const commonMeta=[['持仓',`${symbol} ${order.direction_text} · 剩余${order.remaining_exit_pct??100}%`],['本次资金 / 杠杆',`${Number(order.requested_margin||order.margin_amount||0).toFixed(2)} USDT / ${orderLeverage(order)}x`],['当前保证金 / 名义',`${currentMargin.toFixed(2)} / ${notional.toFixed(2)} USDT`],['标记价 / 均价',`${decisionPrice(marketPrice)} / ${decisionPrice(order.entry)}`],['最大亏损',`${Number(order.max_loss_amount||order.risk_amount||0).toFixed(2)} USDT`],['止损价 / 预计累计盈亏',`${decisionPrice(order.stop_loss)} / ${expectedStopPnl>=0?'+':''}${expectedStopPnl.toFixed(2)} USDT`],['当前预估总盈亏',`${netPnl+realized>=0?'+':''}${(netPnl+realized).toFixed(2)} USDT`]];
                 if(stopHit){
-                    setDecisionView({action:'立即平仓',color:'#e74c3c',subtitle:'价格已触发预设止损，禁止扛单或补仓',meta:commonMeta,reasons:[`止损 ${decisionPrice(order.stop_loss)} 已被触发`,'当前首要任务是控制损失，不等待指标反转'],next:'按计划退出，并在复盘中记录滑点',buttonText:'记录平仓',buttonAction:quickCloseOrder});return;
+                    setDecisionView({action:'立即平仓',color:'#e74c3c',subtitle:'价格已触发预设止损，禁止扛单或补仓',meta:[...commonMeta,['本次应平',`${notional.toFixed(2)} USDT名义 · 释放约${currentMargin.toFixed(2)} USDT保证金`]],reasons:[`止损 ${decisionPrice(order.stop_loss)} 已被触发`,`当前预估累计净盈亏 ${(netPnl+realized).toFixed(2)} USDT`,'当前首要任务是控制损失，不等待指标反转'],next:'平掉全部剩余仓位，并在复盘中记录实际滑点',buttonText:`平仓 ${notional.toFixed(2)} USDT`,buttonAction:quickCloseOrder});return;
                 }
                 if(tp3Hit||tp2Hit||tp1Hit){
                     const level=tp3Hit?'TP3':tp2Hit?'TP2':'TP1';
-                    const pct=tp3Hit?(order.tp3_close_pct||40):tp2Hit?(order.tp2_close_pct||30):(order.tp1_close_pct||30);
-                    setDecisionView({action:'执行止盈',color:'#f39c12',subtitle:`${level} 已触发，按计划处理，不把盈利单拖回亏损`,meta:commonMeta,reasons:[`${level} 目标已到，计划止盈比例 ${pct}%`,'剩余仓位继续受原止损和时间止损约束'],next:tp3Hit?'平掉剩余仓位并完成复盘':'先执行分批止盈，再观察下一级目标',buttonText:tp3Hit?'记录全部止盈':`记录${level}分批止盈`,buttonAction:confirmTakeProfit});return;
+                    const remainingExitPct=Number(order.remaining_exit_pct??100);
+                    const pendingPct=tp3Hit?remainingExitPct:(tp2Hit&&!takenTps.has('TP1')?Number(order.tp1_close_pct||30):0)+(tp2Hit?Number(order.tp2_close_pct||30):Number(order.tp1_close_pct||30));
+                    const closePct=Math.min(remainingExitPct,pendingPct);
+                    const closeNotional=notional*closePct/Math.max(remainingExitPct,1);
+                    const releaseMargin=marginForNotional(order,closeNotional);
+                    setDecisionView({action:'执行止盈',color:'#f39c12',subtitle:`${level} 已触发，按计划处理，不把盈利单拖回亏损`,meta:[...commonMeta,['本次止盈',`${closePct}% · 平${closeNotional.toFixed(2)} USDT名义`],['预计释放保证金',`${releaseMargin.toFixed(2)} USDT`]],reasons:[`${level} 目标已到，本次应止盈 ${closePct}%`,'剩余仓位继续受原止损和时间止损约束'],next:tp3Hit?'平掉剩余仓位并完成复盘':'先执行分批止盈，再观察下一级目标',buttonText:tp3Hit?`全部止盈 ${closeNotional.toFixed(2)}`:`止盈 ${closeNotional.toFixed(2)} USDT`,buttonAction:confirmTakeProfit});return;
                 }
                 if(timedOut){
                     setDecisionView({action:'重新评估/平仓',color:'#e67e22',subtitle:'持仓已超过时间止损，且尚未到达TP1',meta:commonMeta,reasons:[`已持仓 ${(heldMinutes/60).toFixed(1)} 小时，超过计划 ${(maxMinutes/60).toFixed(1)} 小时`,'资金没有按预期效率运行'],next:'优先退出；若继续持有，必须重新建立完整交易理由',buttonText:'记录平仓',buttonAction:quickCloseOrder});return;
@@ -523,8 +530,10 @@
                     if(!adxOk)missing.push('ADX低于20');
                     if(!qualityOk)missing.push('执行质量未通过');
                     if(!oiOk)missing.push(oi.regime==='collecting'?'OI仍在积累5分钟样本':'OI未显示新增资金顺势进入');
+                    const addPlan=previewPyramidAdd(order,nextEntry);
+                    if(!addPlan.allowed)missing.push(addPlan.reason);
                     if(missing.length===0){
-                        setDecisionView({action:'允许盈利加仓',color:'#9b59b6',subtitle:`${nextEntry.name}触发，四项确认均通过`,meta:[...commonMeta,['本次加仓',`${nextEntry.pct}% · ${decisionPrice(nextEntry.price)}`]],reasons:['持仓处于盈利状态','多周期同向且ADX≥20','盘口可执行，OI显示新增资金顺势进入'],next:'确认后增加计划仓位；原止损不得放宽',buttonText:`确认加仓 ${nextEntry.pct}%`,buttonAction:confirmPyramidAdd});return;
+                        setDecisionView({action:'允许盈利加仓',color:'#9b59b6',subtitle:`${nextEntry.name}触发，四项确认与最大亏损约束均通过`,meta:[...commonMeta,['本次加仓保证金',`${addPlan.addMargin.toFixed(2)} USDT`],['本次加仓名义',`${addPlan.addNotional.toFixed(2)} USDT @ ${decisionPrice(nextEntry.price)}`],['加仓后止损',`${decisionPrice(addPlan.adjustedStop)} · 预计最大亏损${addPlan.estimatedRisk.toFixed(2)} USDT`]],reasons:['持仓处于盈利状态','多周期同向且ADX≥20','盘口可执行，OI显示新增资金顺势进入','止损只向盈利方向收紧，不超过本次最大亏损'],next:`确认增加 ${addPlan.addMargin.toFixed(2)} USDT保证金，并把止损调整到 ${decisionPrice(addPlan.adjustedStop)}`,buttonText:`加仓 ${addPlan.addMargin.toFixed(2)} USDT`,buttonAction:confirmPyramidAdd});return;
                     }
                     setDecisionView({action:'等待，不加仓',color:'#f39c12',subtitle:'价格到了加仓位，但确认条件不完整',meta:commonMeta,reasons:missing,next:'等待缺失条件通过；亏损仓绝不补仓'});return;
                 }
@@ -535,9 +544,13 @@
             if(tp.direction!=='neutral'){
                 const portfolio=evaluatePortfolioRisk(data);
                 if(portfolio.allowed){
-                    const firstMargin=Number(tp.margin_amount||0)*0.5;
                     const entry2=tp.pyramid&&tp.pyramid.entry2&&tp.pyramid.entry2.price;
-                    setDecisionView({action:`首仓做${tp.direction==='long'?'多':'空'}`,color:tp.direction==='long'?'#2ecc71':'#e74c3c',subtitle:'交易条件与组合风控均通过，仅先开计划仓位的50%',meta:[['品种',symbol],['首仓保证金',`${firstMargin.toFixed(2)} USDT`],['入场 / 止损',`${decisionPrice(tp.entry)} / ${decisionPrice(tp.stop_loss)}`],['计划总风险',`${Number(tp.risk_amount||0).toFixed(2)} USDT`]],reasons:[data.multi_tf_confirm&&data.multi_tf_confirm.reason||'多周期确认通过',`ADX ${Number(data.adx).toFixed(0)} · 信号质量 ${data.signal_quality}分`,data.market_quality&&data.market_quality.reason||'执行质量通过'],next:`首仓后只在盈利运行至 ${decisionPrice(entry2)} 且OI确认时加仓`,buttonText:'记录首仓 50%',buttonAction:placeOrder});return;
+                    const riskCap=getRiskSettings().account_size*getRiskSettings().risk_pct/100;
+                    setDecisionView({action:`准备做${tp.direction==='long'?'多':'空'}`,color:tp.direction==='long'?'#2ecc71':'#e74c3c',subtitle:'信号已通过；输入本次资金和最大亏损，系统自动采用推荐杠杆',meta:[['品种',symbol],['入场 / 技术止损',`${decisionPrice(tp.entry)} / ${decisionPrice(tp.stop_loss)}`],['系统推荐杠杆',`${recommendedLeverageForData(data)}x`],['账户单笔亏损上限',`${riskCap.toFixed(2)} USDT`]],reasons:[data.multi_tf_confirm&&data.multi_tf_confirm.reason||'多周期确认通过',`ADX ${Number(data.adx).toFixed(0)} · 信号质量 ${data.signal_quality}分`,data.market_quality&&data.market_quality.reason||'执行质量通过'],next:`设置完成后先开50%；盈利运行至 ${decisionPrice(entry2)} 且OI确认才加仓`,buttonText:'设置本次资金和最大亏损',buttonAction:placeOrder});return;
+                }
+                const amountAdjustable=portfolio.reasons.length>0&&portfolio.reasons.every(reason=>/组合止损风险|敞口/.test(reason));
+                if(amountAdjustable){
+                    setDecisionView({action:'缩小资金后可开仓',color:'#f39c12',subtitle:'信号有效，但默认仓位超过组合额度；可输入更小资金和最大亏损重新计算',meta:[['品种',symbol],['方向',tp.direction_text],['系统推荐杠杆',`${recommendedLeverageForData(data)}x`],['技术止损',decisionPrice(tp.stop_loss)]],reasons:portfolio.reasons,next:'点击设置金额，系统将用你的最大亏损重新检查组合风控',buttonText:'设置较小资金和最大亏损',buttonAction:placeOrder});return;
                 }
                 setDecisionView({action:'禁止开仓',color:'#e74c3c',subtitle:'信号存在，但账户组合风险不允许增加敞口',meta:[['品种',symbol],['候选方向',tp.direction_text],['入场',decisionPrice(tp.entry)],['止损',decisionPrice(tp.stop_loss)]],reasons:portfolio.reasons.slice(0,3),next:'先降低现有持仓风险或等待日亏损熔断解除'});return;
             }
@@ -926,6 +939,48 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const s=order.account_settings||defaultRiskSettings;
             return orderNotional(order)*((Number(s.fee_pct)||0)+(Number(s.slippage_pct)||0))*2/100;
         }
+        function orderLeverage(order){return Math.max(1,Number(order.leverage)||1)}
+        function marginForNotional(order,notional){return Number(notional||0)/orderLeverage(order)}
+        function buildTradeSizing(data,requestedMargin,maxLoss,requestedLeverage){
+            const tp=data.trade_plan,s=getRiskSettings();
+            const leverage=Math.max(1,Number(requestedLeverage)||1);
+            const stopRate=Math.abs(Number(tp.entry)-Number(tp.stop_loss))/Number(tp.entry);
+            const costRate=((Number(s.fee_pct)||0)+(Number(s.slippage_pct)||0))*2/100;
+            const lossRate=stopRate+costRate;
+            const accountMarginCap=s.account_size*s.max_margin_pct/100;
+            const fundNotional=Math.min(requestedMargin,accountMarginCap)*leverage;
+            const riskNotional=lossRate>0?maxLoss/lossRate:fundNotional;
+            const plannedNotional=Math.max(0,Math.min(fundNotional,riskNotional));
+            const usedMargin=plannedNotional/leverage;
+            return {leverage,stopRate,costRate,lossRate,plannedNotional,usedMargin,requestedMargin,maxLoss,estimatedRisk:plannedNotional*lossRate,priceRisk:plannedNotional*stopRate,roundtripCost:plannedNotional*costRate,accountMarginCap};
+        }
+        function recommendedLeverageForData(data){
+            const tp=data.trade_plan||{},settings=getRiskSettings();
+            const modelLeverage=Math.max(1,Number(data.leverage&&data.leverage.recommended_leverage)||Number(tp.leverage)||1);
+            const stopRate=Math.abs(Number(tp.entry)-Number(tp.stop_loss))/Math.max(Number(tp.entry),0.00000001);
+            const technicalCap=Math.max(1,Math.floor(0.8/Math.max(stopRate,0.0001)));
+            return Math.max(1,Math.min(modelLeverage,settings.max_leverage,technicalCap));
+        }
+        function previewPyramidAdd(order,level){
+            const planned=Number(order.planned_notional_value||order.notional_value||0);
+            const oldNotional=orderNotional(order);
+            const addNotional=planned*Number(level.pct)/100;
+            const newNotional=oldNotional+addNotional;
+            const addPrice=Number(level.price);
+            const newEntry=(oldNotional*Number(order.entry)+addNotional*addPrice)/newNotional;
+            const settings=order.account_settings||defaultRiskSettings;
+            const costRate=((Number(settings.fee_pct)||0)+(Number(settings.slippage_pct)||0))*2/100;
+            const maxLoss=Number(order.max_loss_amount||order.risk_amount||0);
+            const priceLossBudget=maxLoss-newNotional*costRate;
+            if(priceLossBudget<=0)return {allowed:false,reason:'最大亏损不足以覆盖加仓后的交易成本'};
+            const allowedPriceRate=priceLossBudget/newNotional;
+            const requiredStop=order.direction==='long'?newEntry*(1-allowedPriceRate):newEntry*(1+allowedPriceRate);
+            const adjustedStop=order.direction==='long'?Math.max(Number(order.stop_loss),requiredStop):Math.min(Number(order.stop_loss),requiredStop);
+            const hasExecutionRoom=order.direction==='long'?adjustedStop<addPrice:adjustedStop>addPrice;
+            if(!hasExecutionRoom)return {allowed:false,reason:'为满足最大亏损，新止损会过于接近当前价格'};
+            const priceRiskRate=Math.abs(newEntry-adjustedStop)/newEntry;
+            return {allowed:true,addNotional,addMargin:marginForNotional(order,addNotional),newNotional,newEntry,adjustedStop,estimatedRisk:newNotional*(priceRiskRate+costRate)};
+        }
         
         function quickCloseOrder(){
             const orders=getOrders();
@@ -965,10 +1020,26 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         
         function placeOrder(){
             if(!currentData||currentData.trade_plan.direction==='neutral'){alert('当前无明确交易信号');return}
-            const portfolioAssessment=evaluatePortfolioRisk(currentData);
-            if(!portfolioAssessment.allowed){alert('组合风控禁止记录新交易：\n'+portfolioAssessment.reasons.join('\n'));return}
             const d=currentData;
             const tp=d.trade_plan;
+            const settings=getRiskSettings();
+            const marginInput=prompt(`请输入本次最多投入的保证金（USDT）\n系统会按50% / 30% / 20%分配\n账户设置的保证金上限：${(settings.account_size*settings.max_margin_pct/100).toFixed(2)} USDT`,Number(tp.margin_amount||0).toFixed(2));
+            if(marginInput===null)return;
+            const requestedMargin=Number(marginInput);
+            if(!Number.isFinite(requestedMargin)||requestedMargin<=0){alert('请输入有效的本次做单金额');return}
+            const maxLossInput=prompt(`请输入这笔交易最多允许亏损多少USDT\n该金额包含技术止损损失、预估手续费和滑点\n账户单笔风险上限：${(settings.account_size*settings.risk_pct/100).toFixed(2)} USDT`,Math.min(Number(tp.risk_amount||0),settings.account_size*settings.risk_pct/100).toFixed(2));
+            if(maxLossInput===null)return;
+            const maxLoss=Number(maxLossInput);
+            const accountRiskCap=settings.account_size*settings.risk_pct/100;
+            if(!Number.isFinite(maxLoss)||maxLoss<=0){alert('请输入有效的最大亏损金额');return}
+            if(maxLoss>accountRiskCap+0.001){alert(`最大亏损不能超过账户单笔风险上限 ${accountRiskCap.toFixed(2)} USDT。\n如需调整，请先在“更多工具 → 账户与组合风控”修改单笔风险。`);return}
+            const selectedLeverage=recommendedLeverageForData(d);
+            const sizing=buildTradeSizing(d,requestedMargin,maxLoss,selectedLeverage);
+            if(sizing.plannedNotional<=0){alert('根据当前止损和最大亏损，无法建立有效仓位');return}
+            const customData={...d,trade_plan:{...tp,notional_value:sizing.plannedNotional,risk_amount:sizing.estimatedRisk}};
+            const portfolioAssessment=evaluatePortfolioRisk(customData);
+            if(!portfolioAssessment.allowed){alert('组合风控禁止记录新交易：\n'+portfolioAssessment.reasons.join('\n'));return}
+            const plannedNotional=sizing.plannedNotional;
             const order={
                 id:Date.now(),
                 time:new Date().toISOString(),
@@ -987,20 +1058,23 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 tp1_close_pct:tp.tp1_close_pct,
                 tp2_close_pct:tp.tp2_close_pct,
                 tp3_close_pct:tp.tp3_close_pct,
-                position_pct:tp.position_pct,
-                margin_pct:tp.margin_pct,
-                margin_amount:tp.margin_amount,
-                notional_value:tp.notional_value,
-                planned_notional_value:tp.notional_value,
-                filled_notional:tp.notional_value*0.5,
+                position_pct:sizing.usedMargin/settings.account_size*100,
+                margin_pct:sizing.usedMargin/settings.account_size*100,
+                margin_amount:sizing.usedMargin,
+                requested_margin:sizing.requestedMargin,
+                max_loss_amount:sizing.maxLoss,
+                notional_value:plannedNotional,
+                planned_notional_value:plannedNotional,
+                filled_notional:plannedNotional*0.5,
                 filled_pct:50,
                 initial_entry:tp.entry,
                 account_settings:{...getRiskSettings()},
                 risk_reward:tp.risk_reward,
-                risk_amount:tp.risk_amount,
-                price_risk_amount:tp.price_risk_amount,
-                estimated_roundtrip_cost:tp.estimated_roundtrip_cost,
-                leverage:d.leverage.recommended_leverage,
+                risk_amount:sizing.estimatedRisk,
+                price_risk_amount:sizing.priceRisk,
+                estimated_roundtrip_cost:sizing.roundtripCost,
+                leverage:sizing.leverage,
+                recommended_leverage:selectedLeverage,
                 signal_quality:d.signal_quality,
                 // 技术指标
                 current_price:d.current_price,
@@ -1051,7 +1125,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             document.getElementById('closeOrderBtn').style.display='inline-block';
             renderPyramidCard(d);
             renderDecisionCockpit(d);
-            alert('✅ 首仓已记录：当前只使用计划仓位的50%。\n\n后续只有在盈利、趋势和OI同时确认时，驾驶舱才会允许加仓。');
+            const firstMargin=sizing.usedMargin*0.5,firstNotional=plannedNotional*0.5;
+            const adjustment=sizing.usedMargin+0.01<requestedMargin?`\n因最大亏损限制，实际总保证金自动降至 ${sizing.usedMargin.toFixed(2)} USDT。`:'';
+            alert(`✅ 首仓已记录\n\n本次资金上限：${requestedMargin.toFixed(2)} USDT\n最大允许亏损：${maxLoss.toFixed(2)} USDT\n系统推荐并采用杠杆：${sizing.leverage}x\n首仓保证金：${firstMargin.toFixed(2)} USDT\n首仓名义仓位：${firstNotional.toFixed(2)} USDT${adjustment}\n\n后续只有盈利且四项确认通过才允许加仓。`);
         }
 
         function confirmPyramidAdd(){
@@ -1068,19 +1144,20 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const oi=currentData.open_interest||{};
             const confirmed=profitable&&currentData.multi_tf_confirm&&currentData.multi_tf_confirm.confirmed&&Number(currentData.adx)>=20&&currentData.market_quality&&currentData.market_quality.tradeable&&oi.regime===(isLong?'new_longs':'new_shorts');
             if(!confirmed){alert('加仓条件已经变化，请等待驾驶舱重新确认。亏损仓禁止补仓。');renderDecisionCockpit(currentData);return}
-            if(!confirm(`确认按计划增加 ${level.pct}% 仓位？\n成交参考价 ${decisionPrice(level.price)}\n原止损不会放宽。`))return;
-            const planned=Number(order.planned_notional_value||order.notional_value||0);
-            const oldNotional=orderNotional(order);
-            const addNotional=planned*Number(level.pct)/100;
-            const newNotional=oldNotional+addNotional;
-            order.entry=(oldNotional*order.entry+addNotional*Number(level.price))/newNotional;
-            order.filled_notional=newNotional;
+            const addPlan=previewPyramidAdd(order,level);
+            if(!addPlan.allowed){alert(`本次加仓已取消：${addPlan.reason}`);renderDecisionCockpit(currentData);return}
+            if(!confirm(`确认盈利加仓？\n加仓保证金：${addPlan.addMargin.toFixed(2)} USDT\n加仓名义仓位：${addPlan.addNotional.toFixed(2)} USDT\n成交参考价：${decisionPrice(level.price)}\n加仓后止损：${decisionPrice(addPlan.adjustedStop)}\n预计最大亏损：${addPlan.estimatedRisk.toFixed(2)} USDT`))return;
+            order.entry=addPlan.newEntry;
+            order.stop_loss=addPlan.adjustedStop;
+            order.filled_notional=addPlan.newNotional;
+            order.risk_amount=addPlan.estimatedRisk;
             order.filled_pct=Math.min(100,filledPct+Number(level.pct));
             order.last_add_time=new Date().toISOString();
+            order.last_stop_adjustment={time:order.last_add_time,stop_loss:addPlan.adjustedStop,reason:'加仓后按最大亏损自动收紧'};
             saveOrders(orders);
             renderOrders();
             renderDecisionCockpit(currentData);
-            alert(`✅ 已记录盈利加仓 ${level.pct}%\n当前完成计划仓位 ${order.filled_pct}%\n新持仓均价 ${decisionPrice(order.entry)}`);
+            alert(`✅ 已记录盈利加仓\n本次增加保证金：${addPlan.addMargin.toFixed(2)} USDT\n本次增加名义仓位：${addPlan.addNotional.toFixed(2)} USDT\n当前完成计划仓位：${order.filled_pct}%\n新持仓均价：${decisionPrice(order.entry)}\n新止损：${decisionPrice(order.stop_loss)}\n预计最大亏损：${addPlan.estimatedRisk.toFixed(2)} USDT`);
         }
 
         function confirmTakeProfit(){
@@ -1106,7 +1183,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const currentNotional=orderNotional(order);
             const closeFraction=Math.min(1,planClosePct/Math.max(remainingPlanPct,1));
             const closeNotional=currentNotional*closeFraction;
-            if(!confirm(`${target.name} 已触发，确认按计划止盈 ${planClosePct}%？\n参考成交价 ${decisionPrice(price)}\n剩余仓位继续执行原止损。`))return;
+            const releaseMargin=marginForNotional(order,closeNotional);
+            if(!confirm(`${target.name} 已触发，确认按计划止盈？\n平仓名义金额：${closeNotional.toFixed(2)} USDT\n预计释放保证金：${releaseMargin.toFixed(2)} USDT\n参考成交价：${decisionPrice(price)}\n剩余仓位继续执行原止损。`))return;
             const pnlPct=isLong?(price-order.entry)/order.entry*100:(order.entry-price)/order.entry*100;
             const settings=order.account_settings||defaultRiskSettings;
             const cost=closeNotional*((Number(settings.fee_pct)||0)+(Number(settings.slippage_pct)||0))*2/100;
@@ -1116,6 +1194,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             order.remaining_exit_pct=Math.max(0,remainingPlanPct-planClosePct);
             order.taken_tp_levels=[...taken,...pending.map(level=>level.name)];
             order.partial_exits=[...(order.partial_exits||[]),{level:target.name,price,time:new Date().toISOString(),notional:closeNotional,pnl:legPnl}];
+            const remainingStopPct=isLong?(order.stop_loss-order.entry)/order.entry*100:(order.entry-order.stop_loss)/order.entry*100;
+            const remainingSettings=order.account_settings||defaultRiskSettings;
+            const remainingCost=order.filled_notional*((Number(remainingSettings.fee_pct)||0)+(Number(remainingSettings.slippage_pct)||0))*2/100;
+            const stopScenarioPnl=order.realized_pnl+remainingStopPct/100*order.filled_notional-remainingCost;
+            order.risk_amount=Math.max(0,-stopScenarioPnl);
             if(order.filled_notional<0.01||target.name==='TP3'){
                 order.status='closed';
                 order.close_price=price;
@@ -1134,7 +1217,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 document.getElementById('closeOrderBtn').style.display='none';
                 alert(`✅ ${target.name} 全部止盈完成\n累计净盈亏 ${order.realized_pnl>=0?'+':''}${order.realized_pnl.toFixed(2)} USDT`);
             }else{
-                alert(`✅ 已记录 ${target.name} 分批止盈\n本次净盈亏 ${legPnl>=0?'+':''}${legPnl.toFixed(2)} USDT\n剩余计划仓位 ${order.remaining_exit_pct}%`);
+                alert(`✅ 已记录 ${target.name} 分批止盈\n本次平仓名义金额：${closeNotional.toFixed(2)} USDT\n本次释放保证金：${releaseMargin.toFixed(2)} USDT\n本次净盈亏：${legPnl>=0?'+':''}${legPnl.toFixed(2)} USDT\n剩余计划仓位：${order.remaining_exit_pct}%`);
             }
         }
         
@@ -1428,7 +1511,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                         <span>评分: ${o.score}分${o.strength_text?' ('+o.strength_text+')':''}</span>
                         <span>信号质量: ${o.signal_quality??'--'}分</span>
                         <span>RSI: ${o.rsi.toFixed(0)} ADX: ${o.adx.toFixed(0)}</span>
-                        <span>杠杆: ${o.leverage}x 保证金: ${o.margin_pct??o.position_pct}%</span>
+                        <span>推荐杠杆: ${o.leverage}x</span>
+                        <span>本次资金上限: ${Number(o.requested_margin??o.margin_amount??0).toFixed(2)} USDT</span>
+                        <span>最大亏损: ${Number(o.max_loss_amount??o.risk_amount??0).toFixed(2)} USDT</span>
+                        <span>当前保证金/名义: ${marginForNotional(o,orderNotional(o)).toFixed(2)} / ${orderNotional(o).toFixed(2)} USDT</span>
                     </div>
                     ${o.status==='open'?`<div style="margin-top:6px;padding:6px 8px;background:${floatPnl>=0?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)'};border-radius:5px">
                         <div style="display:flex;justify-content:space-between;font-size:11px">

@@ -267,8 +267,14 @@ class RouteTests(unittest.TestCase):
         self.assertIn("function renderDecisionCockpit", html)
         self.assertIn("function confirmPyramidAdd", html)
         self.assertIn("function confirmTakeProfit", html)
-        self.assertIn("filled_notional:tp.notional_value*0.5", html)
+        self.assertIn("filled_notional:plannedNotional*0.5", html)
         self.assertIn("亏损仓禁止补仓", html)
+        self.assertIn("function buildTradeSizing", html)
+        self.assertIn("function previewPyramidAdd", html)
+        self.assertIn("function recommendedLeverageForData", html)
+        self.assertIn("max_loss_amount:sizing.maxLoss", html)
+        self.assertIn("系统推荐并采用杠杆", html)
+        self.assertIn("本次加仓保证金", html)
 
 
 if __name__ == "__main__":
