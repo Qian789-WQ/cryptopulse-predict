@@ -172,6 +172,9 @@ class RouteTests(unittest.TestCase):
         self.assertIn("normalizeRiskSettings", html)
         self.assertIn("markPrices[o.symbol]||livePrices[o.symbol]", html)
         self.assertIn("if(wsConnected)subscribeSymbol(id);\n            predict();", html)
+        self.assertNotIn("calcLiquidation", html)
+        self.assertNotIn("kellyPos", html)
+        self.assertNotIn("economicEvents", html)
 
 
 if __name__ == "__main__":

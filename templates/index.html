@@ -146,15 +146,6 @@
         <!-- 计算器面板 -->
         <div id="calculatorPanel" style="display:none;background:#121827;border:1px solid #1a2340;border-radius:12px;padding:14px;margin-bottom:12px">
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-                <!-- 爆仓计算器 -->
-                <div>
-                    <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">💥 爆仓价格计算器</div>
-                    <div style="display:grid;gap:6px">
-                        <div style="display:flex;gap:6px"><input type="number" id="liqPrice" placeholder="入场价" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><select id="liqDir" style="padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><option value="long">做多</option><option value="short">做空</option></select></div>
-                        <div style="display:flex;gap:6px"><input type="number" id="liqLeverage" placeholder="杠杆倍数" value="20" style="flex:1;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff;font-size:12px"><button onclick="calcLiquidation()" style="padding:6px 12px;background:#e74c3c;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">计算</button></div>
-                        <div id="liqResult" style="padding:8px;background:#0e1421;border-radius:5px;font-size:12px;display:none"></div>
-                    </div>
-                </div>
                 <!-- 利润计算器 -->
                 <div>
                     <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">💰 利润计算器</div>
@@ -294,7 +285,6 @@
                     <div id="portfolioRisk" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="tradePlan"></div>
                     <div id="trailingStop" style="margin-top:10px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
-                    <div id="kellyPos" style="margin-top:6px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
                 </div>
                 <div class="card"><div class="card-title">📈 趋势持仓</div>
                     <div style="display:grid;gap:8px">
@@ -317,7 +307,6 @@
                 <div class="card"><div class="card-title">⚠️ 高级信号 <span id="monitorStatus" style="float:right;font-size:10px;color:#525f7a"></span></div><div id="advancedSignals" style="font-size:11px"></div>
                     <div id="orderAlerts" style="margin-top:8px"></div>
                 </div>
-                <div class="card"><div class="card-title">📅 重大事件提醒</div><div id="economicEvents" style="font-size:11px"></div></div>
                 <div class="card"><div class="card-title">支撑阻力 & 斐波那契</div><div class="sr-grid" id="srList"></div></div>
                 <div class="card"><div class="card-title">成交量监控</div><div id="volumeBox"></div></div>
             </div>
@@ -498,10 +487,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 const ts=d.trailing_stop;
                 document.getElementById('trailingStop').innerHTML=`<span class="gray">移动止损：</span>${ts.note}${ts.stop_loss!=null?` <span class="${ts.stage==='entry'?'red':'green'}">止损 $${ts.stop_loss.toLocaleString()}</span>`:''}`;
                 
-                // 凯利仓位
-                const k=d.kelly;
-                document.getElementById('kellyPos').innerHTML=`<span class="gray">仓位模型：</span>${k.note}`;
-                
                 // 信号强度
                 const ss=d.trade_plan;
                 const ssEl=document.getElementById('signalStrength');
@@ -609,26 +594,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const p=document.getElementById('historyPanel');
             p.style.display=p.style.display==='none'?'block':'none';
             if(p.style.display==='block')loadHistoryStats();
-        }
-        
-        // 爆仓价格计算
-        function calcLiquidation(){
-            const price=parseFloat(document.getElementById('liqPrice').value);
-            const leverage=parseFloat(document.getElementById('liqLeverage').value);
-            const dir=document.getElementById('liqDir').value;
-            if(!Number.isFinite(price)||price<=0||!Number.isFinite(leverage)||leverage<=1){alert('请输入有效价格，杠杆需大于1');return}
-            // 简化公式：维持保证金率约0.5%
-            const mmr=0.005;
-            let liqPrice;
-            if(dir==='long'){
-                liqPrice=price*(1-1/leverage+mmr);
-            }else{
-                liqPrice=price*(1+1/leverage-mmr);
-            }
-            const r=document.getElementById('liqResult');
-            r.style.display='block';
-            const movePct=Math.abs(liqPrice-price)/price*100;
-            r.innerHTML=`<span class="red">粗略强平估算：$${liqPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><br><span style="color:#525f7a">${dir==='long'?'下跌':'上涨'} ${movePct.toFixed(2)}% · 实际以OKX标记价格、保证金模式和维持保证金档位为准</span>`;
         }
         
         // 利润计算
@@ -1634,16 +1599,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             if(countdownTimer)clearInterval(countdownTimer);
         }
         
-        // 重大经济事件数据
-        const economicEvents=[
-            {date:'每月第一个周五',event:'美国非农就业数据',impact:'高',note:'波动极大，建议空仓或轻仓'},
-            {date:'每月中旬',event:'美国CPI通胀数据',impact:'高',note:'影响美联储政策，波动大'},
-            {date:'每月下旬',event:'美联储利率决议',impact:'极高',note:'行情剧烈波动，强烈建议空仓'},
-            {date:'每季度',event:'美联储议息会议纪要',impact:'中',note:'可能引发短期波动'},
-            {date:'每月',event:'美国PCE物价指数',impact:'高',note:'美联储首选通胀指标'},
-            {date:'每周四',event:'美国初请失业金',impact:'中',note:'影响有限但需关注'},
-        ];
-        
         function renderPyramidCard(d){
             const card=document.getElementById('pyramidCard');
             const content=document.getElementById('pyramidContent');
@@ -1760,11 +1715,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             `;
         }
         
-        function renderEconomicEvents(){
-            const el=document.getElementById('economicEvents');
-            el.innerHTML='<div style="color:#f39c12;text-align:center;padding:8px">经济日历尚未接入可靠实时数据<br><span style="font-size:10px;color:#525f7a">交易前请核对官方日历；本站不再用固定日期猜测事件</span></div>';
-        }
-        
         async function logout(){
             if(confirm('确定退出登录？')){
                 await fetch('/api/logout');
@@ -1784,8 +1734,6 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             startAutoUpdate();
             // 启动WebSocket实时价格
             connectWebSocket();
-            // 渲染重大事件
-            renderEconomicEvents();
             // 立即更新持仓价格
             setTimeout(updateLivePrices, 2000);
             const savedKey=getWechatKey();

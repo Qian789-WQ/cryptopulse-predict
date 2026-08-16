@@ -1330,20 +1330,6 @@ def estimate_win_rate(score, adx, has_divergence, fake_breakout, streak):
     if streak >= 5: base_rate -= 5
     return round(max(20, min(80, base_rate)))
 
-def calc_kelly_position(win_rate, risk_reward, account_size=1000):
-    """凯利公式仓位"""
-    p = win_rate / 100
-    q = 1 - p
-    b = risk_reward
-    if b <= 0:
-        return {"kelly_pct": 0, "half_kelly_pct": 0, "position_size": 0, "note": "盈亏比无效"}
-    kelly = max(0, min((b * p - q) / b, 0.5))
-    half_kelly = kelly * 0.5
-    return {"kelly_pct": round(kelly * 100, 1), "half_kelly_pct": round(half_kelly * 100, 1),
-            "position_size": round(account_size * half_kelly, 2),
-            "note": f"凯利公式建议仓位{half_kelly*100:.1f}%（半凯利，更保守）"}
-
-
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -1490,9 +1476,6 @@ def api_predict():
             signal, signal_class = "风控观望", "neutral"
         trailing_stop = calc_trailing_stop(tp, market_price)
         win_rate = estimate_win_rate(score, adx_val, divergence["has_divergence"], fake_breakout["is_fake"], streak["up_streak"] if score >= 50 else streak["down_streak"])
-        kelly = {"enabled": False, "kelly_pct": 0, "half_kelly_pct": 0,
-                 "position_size": 0, "note": "未使用：启发式信号质量不能作为凯利胜率"}
-        
         # 趋势判断
         trend = pred.get("trend", "震荡")
         trend_note = ""
@@ -1630,7 +1613,6 @@ def api_predict():
             "trailing_stop": trailing_stop,
             "win_rate": win_rate,
             "signal_quality": win_rate,
-            "kelly": kelly,
             "advice": advice,
             "timestamp": datetime.now().isoformat(),
             "candles_count": len(df)
