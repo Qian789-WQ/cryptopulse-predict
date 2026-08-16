@@ -1006,13 +1006,18 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         
         function showOrderAlert(levelName, symbol, price, targetPrice, type){
             const el=document.getElementById('orderAlerts');
-            const color=type==='danger'?'#e74c3c':'#2ecc71';
+            const color=type==='danger'?'#e74c3c':type==='warning'?'#f39c12':'#2ecc71';
             const time=new Date().toLocaleTimeString('zh-CN');
+            // 根据提醒类型显示标签
+            let label = '目标';
+            if(levelName.includes('止损')) label = '止损';
+            else if(levelName.includes('补仓')) label = '补仓位';
+            else if(levelName.includes('TP')) label = '止盈';
             const alertHtml=`<div style="padding:6px 8px;background:${color}22;border-left:3px solid ${color};border-radius:4px;margin-bottom:4px;font-size:11px">
                 <span style="color:${color};font-weight:700">🚨 ${levelName}</span>
                 <span style="color:#8892b0;margin-left:6px">${symbol}</span>
                 <span style="float:right;color:#525f7a">${time}</span>
-                <div style="margin-top:2px;color:#8892b0">现价 $${price.toFixed(2)} / 目标 $${targetPrice.toFixed(2)}</div>
+                <div style="margin-top:2px;color:#8892b0">现价 $${price.toFixed(2)} / ${label} $${targetPrice.toFixed(2)}</div>
             </div>`;
             el.innerHTML=alertHtml+el.innerHTML;
             // 最多保留5条
