@@ -262,6 +262,13 @@ class RouteTests(unittest.TestCase):
         self.assertIn("orderRoundtripCost", html)
         self.assertIn("marketQualityVal", html)
         self.assertIn("openInterestVal", html)
+        self.assertIn('id="decisionCockpit"', html)
+        self.assertIn('id="professionalDetails" style="display:none"', html)
+        self.assertIn("function renderDecisionCockpit", html)
+        self.assertIn("function confirmPyramidAdd", html)
+        self.assertIn("function confirmTakeProfit", html)
+        self.assertIn("filled_notional:tp.notional_value*0.5", html)
+        self.assertIn("亏损仓禁止补仓", html)
 
 
 if __name__ == "__main__":

@@ -83,6 +83,14 @@
         .ind-item{padding:6px;background:#131a2b;border-radius:6px;text-align:center}
         .ind-item .label{font-size:9px;color:#525f7a}
         .ind-item .value{font-size:13px;font-weight:700;font-family:'Courier New',monospace;margin-top:1px}
+        .decision-cockpit{border:1px solid #2a3450;border-left:5px solid var(--decision-color,#f39c12);background:linear-gradient(140deg,#151d30,#0e1421);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+        .decision-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+        .decision-action{font-size:24px;font-weight:900;color:var(--decision-color,#f39c12)}
+        .decision-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;margin-top:12px}
+        .decision-meta>div{background:#101729;border-radius:8px;padding:9px}.decision-meta .k{font-size:9px;color:#525f7a}.decision-meta .v{font-size:13px;font-weight:700;margin-top:2px}
+        .decision-reasons{font-size:11px;color:#aab3cc;line-height:1.7;margin-top:10px}.decision-next{font-size:12px;color:#f39c12;margin-top:7px;padding-top:7px;border-top:1px solid #222d48}
+        .decision-btn{padding:8px 14px;border:0;border-radius:7px;color:#fff;font-weight:700;cursor:pointer;background:var(--decision-color,#667eea)}
+        .mode-btn{padding:5px 10px;border:1px solid #2a3450;border-radius:6px;color:#8892b0;background:#101729;cursor:pointer;font-size:10px}
         footer{text-align:center;padding:20px 0;color:#525f7a;font-size:10px;line-height:1.6}
         .error{background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:12px;padding:14px;text-align:center;color:#e74c3c;margin:12px 0;display:none;font-size:12px}
         .refresh-tip{text-align:center;font-size:10px;color:#525f7a;margin-top:8px}
@@ -135,11 +143,14 @@
             <select id="timeframe">{% for t in timeframes %}<option value="{{ t.id }}" {% if t.id == '1H' %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select>
             <button class="btn-primary" id="predictBtn" onclick="predict()">🔮 预测</button>
             <button class="btn-secondary" onclick="scanAll()">📊 扫描</button>
-            <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
-            <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
-            <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
-            <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 自动30s</button>
-            <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
+            <button class="btn-secondary" id="utilityToggle" onclick="toggleUtilityControls()">⋯ 更多工具</button>
+            <div id="utilityControls" style="display:none;gap:8px;flex-wrap:wrap">
+                <button class="btn-secondary" onclick="toggleCalculator()">🧮 工具</button>
+                <button class="btn-secondary" onclick="toggleHistory()">📈 历史</button>
+                <button class="btn-secondary" onclick="runBacktest()">📊 回测</button>
+                <button class="btn-secondary" onclick="toggleAutoUpdate()" id="autoUpdateBtn">🔄 自动30s</button>
+                <button class="btn-secondary" onclick="requestNotify()">🔔 通知</button>
+            </div>
         </div>
         <div id="updateCountdown" style="text-align:center;font-size:10px;color:#525f7a;margin-top:-8px;margin-bottom:8px;display:none">自动更新: <span id="countdown">30</span>秒后 (页面位置保持不变)</div>
         
@@ -235,6 +246,16 @@
                 </div>
                 <div id="backtestResult" style="font-size:12px"></div>
             </div>
+            <div class="decision-cockpit" id="decisionCockpit">
+                <div class="decision-head">
+                    <div><div style="font-size:10px;color:#525f7a;margin-bottom:3px">交易决策驾驶舱</div><div class="decision-action" id="decisionAction">等待分析</div><div id="decisionSubtitle" style="font-size:12px;color:#8892b0;margin-top:3px">系统正在汇总趋势、资金和风险条件</div></div>
+                    <div style="display:flex;gap:7px;align-items:center"><button class="decision-btn" id="decisionActionBtn" style="display:none"></button><button class="mode-btn" id="professionalToggle" onclick="toggleProfessionalMode()">展开专业分析</button></div>
+                </div>
+                <div class="decision-meta" id="decisionMeta"></div>
+                <div class="decision-reasons" id="decisionReasons"></div>
+                <div class="decision-next" id="decisionNext">等待最新数据</div>
+            </div>
+            <div id="professionalDetails" style="display:none">
             <div class="price-card">
                 <div class="price-top">
                     <div>
@@ -300,7 +321,7 @@
                     </div>
                 </div>
                 <div class="card" id="pyramidCard" style="display:none">
-                    <div class="card-title">🔔 补仓/平仓提醒</div>
+                    <div class="card-title">🔔 盈利加仓/平仓提醒</div>
                     <div id="pyramidContent"></div>
                 </div>
             </div>
@@ -317,6 +338,7 @@
                     <span id="holdingText" style="font-size:12px">⏰ 建议持仓时间提醒</span>
                     <button onclick="setHoldingAlarm()" style="padding:4px 10px;background:#667eea;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">设置提醒</button>
                 </div>
+            </div>
             </div>
             <div class="card" id="scanCard" style="display:none"><div class="card-title">📊 全币种扫描</div><div class="scan-result" id="scanResult"></div></div>
             <div class="refresh-tip">数据每30秒自动缓存刷新 · 预测仅供参考，不构成投资建议</div>
@@ -390,6 +412,140 @@
             el.textContent=risk.allowed?`✓ 组合风控通过 · 总风险$${risk.total_risk.toFixed(2)} · 同向敞口$${risk.direction_exposure.toFixed(0)}`:`⛔ 组合风控：${risk.reasons.join('；')}`;
             return risk;
         }
+
+        function toggleProfessionalMode(force){
+            const details=document.getElementById('professionalDetails');
+            const button=document.getElementById('professionalToggle');
+            const enabled=typeof force==='boolean'?force:details.style.display==='none';
+            details.style.display=enabled?'block':'none';
+            button.textContent=enabled?'收起专业分析':'展开专业分析';
+            localStorage.setItem('cp_professional_mode',enabled?'1':'0');
+        }
+        function toggleUtilityControls(){
+            const controls=document.getElementById('utilityControls');
+            const enabled=controls.style.display==='none';
+            controls.style.display=enabled?'flex':'none';
+            document.getElementById('utilityToggle').textContent=enabled?'收起工具':'⋯ 更多工具';
+        }
+        function loadProfessionalMode(){
+            toggleProfessionalMode(localStorage.getItem('cp_professional_mode')==='1');
+        }
+        function decisionPrice(value){
+            const n=Number(value);
+            if(!Number.isFinite(n))return '--';
+            const digits=n>=1000?2:n>=1?4:8;
+            return '$'+n.toLocaleString(undefined,{maximumFractionDigits:digits});
+        }
+        function setDecisionView(view){
+            const cockpit=document.getElementById('decisionCockpit');
+            const action=document.getElementById('decisionAction');
+            const subtitle=document.getElementById('decisionSubtitle');
+            const meta=document.getElementById('decisionMeta');
+            const reasons=document.getElementById('decisionReasons');
+            const next=document.getElementById('decisionNext');
+            const button=document.getElementById('decisionActionBtn');
+            cockpit.style.setProperty('--decision-color',view.color||'#f39c12');
+            action.textContent=view.action;
+            subtitle.textContent=view.subtitle||'';
+            const safe=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+            meta.innerHTML=(view.meta||[]).map(item=>`<div><div class="k">${safe(item[0])}</div><div class="v">${safe(item[1])}</div></div>`).join('');
+            reasons.innerHTML=(view.reasons||[]).map(reason=>`<div>• ${safe(reason)}</div>`).join('');
+            next.textContent=view.next?'下一步：'+view.next:'';
+            if(view.buttonText&&view.buttonAction){
+                button.style.display='inline-block';
+                button.textContent=view.buttonText;
+                button.onclick=view.buttonAction;
+            }else{
+                button.style.display='none';
+                button.onclick=null;
+            }
+        }
+        function renderDecisionLoading(symbol){
+            setDecisionView({action:'正在切换',color:'#667eea',subtitle:(symbol||'新币种').replace('-USDT-SWAP','')+' 数据加载中',reasons:['旧币种的数据已清空，不会继续用于当前决策'],next:'等待最新分析完成'});
+        }
+        function blockedNextStep(reasons){
+            const text=reasons.join('；');
+            if(/1H|4H|方向不一致|多周期/.test(text))return '等待1H与4H重新同向，再考虑首仓';
+            if(/ADX|趋势强度/.test(text))return '等待ADX回到20以上并保持方向一致';
+            if(/预测空间|成本|支撑|阻力/.test(text))return '等待潜在空间扩大，至少覆盖成本与止损风险';
+            if(/盘口|点差|成交额|数据过期|不可用/.test(text))return '等待盘口与行情数据恢复正常';
+            if(/资金费率|拥挤/.test(text))return '等待拥挤度和资金费率回落';
+            return '等待下一根已收盘K线重新评估';
+        }
+        function renderDecisionCockpit(data){
+            if(!data||data.symbol!==selectedSymbol){renderDecisionLoading(selectedSymbol);return}
+            const orders=getOrders();
+            const order=orders.find(o=>o.status==='open'&&o.symbol===data.symbol);
+            const marketPrice=Number(markPrices[data.symbol]||(data.mark_price&&data.mark_price.price)||data.current_price);
+            const symbol=data.symbol.replace('-USDT-SWAP','');
+            if(order){
+                const isLong=order.direction==='long';
+                const profitable=isLong?marketPrice>order.entry:marketPrice<order.entry;
+                const grossPct=(isLong?(marketPrice-order.entry):(order.entry-marketPrice))/order.entry*100;
+                const notional=orderNotional(order);
+                const netPnl=grossPct/100*notional-orderRoundtripCost(order);
+                const stopHit=isLong?marketPrice<=order.stop_loss:marketPrice>=order.stop_loss;
+                const takenTps=new Set(order.taken_tp_levels||[]);
+                const tp3Reached=isLong?marketPrice>=order.tp3:marketPrice<=order.tp3;
+                const tp2Reached=isLong?marketPrice>=order.tp2:marketPrice<=order.tp2;
+                const tp1Reached=isLong?marketPrice>=order.tp1:marketPrice<=order.tp1;
+                const tp3Hit=tp3Reached&&!takenTps.has('TP3');
+                const tp2Hit=tp2Reached&&!takenTps.has('TP2');
+                const tp1Hit=tp1Reached&&!takenTps.has('TP1');
+                const heldMinutes=(Date.now()-new Date(order.time).getTime())/60000;
+                const maxMinutes=order.time_stop&&Number(order.time_stop.max_holding_minutes);
+                const timedOut=Number.isFinite(maxMinutes)&&heldMinutes>=maxMinutes&&!tp1Reached;
+                const realized=Number(order.realized_pnl||0);
+                const commonMeta=[['持仓',`${symbol} ${order.direction_text} · 剩余${order.remaining_exit_pct??100}%`],['标记/现价',decisionPrice(marketPrice)],['持仓均价',decisionPrice(order.entry)],['预估总盈亏',`${netPnl+realized>=0?'+':''}${(netPnl+realized).toFixed(2)} USDT`]];
+                if(stopHit){
+                    setDecisionView({action:'立即平仓',color:'#e74c3c',subtitle:'价格已触发预设止损，禁止扛单或补仓',meta:commonMeta,reasons:[`止损 ${decisionPrice(order.stop_loss)} 已被触发`,'当前首要任务是控制损失，不等待指标反转'],next:'按计划退出，并在复盘中记录滑点',buttonText:'记录平仓',buttonAction:quickCloseOrder});return;
+                }
+                if(tp3Hit||tp2Hit||tp1Hit){
+                    const level=tp3Hit?'TP3':tp2Hit?'TP2':'TP1';
+                    const pct=tp3Hit?(order.tp3_close_pct||40):tp2Hit?(order.tp2_close_pct||30):(order.tp1_close_pct||30);
+                    setDecisionView({action:'执行止盈',color:'#f39c12',subtitle:`${level} 已触发，按计划处理，不把盈利单拖回亏损`,meta:commonMeta,reasons:[`${level} 目标已到，计划止盈比例 ${pct}%`,'剩余仓位继续受原止损和时间止损约束'],next:tp3Hit?'平掉剩余仓位并完成复盘':'先执行分批止盈，再观察下一级目标',buttonText:tp3Hit?'记录全部止盈':`记录${level}分批止盈`,buttonAction:confirmTakeProfit});return;
+                }
+                if(timedOut){
+                    setDecisionView({action:'重新评估/平仓',color:'#e67e22',subtitle:'持仓已超过时间止损，且尚未到达TP1',meta:commonMeta,reasons:[`已持仓 ${(heldMinutes/60).toFixed(1)} 小时，超过计划 ${(maxMinutes/60).toFixed(1)} 小时`,'资金没有按预期效率运行'],next:'优先退出；若继续持有，必须重新建立完整交易理由',buttonText:'记录平仓',buttonAction:quickCloseOrder});return;
+                }
+                const filledPct=Number.isFinite(Number(order.filled_pct))?Number(order.filled_pct):100;
+                const nextEntry=filledPct<80&&order.pyramid&&order.pyramid.entry2?{...order.pyramid.entry2,name:'二仓'}:filledPct<100&&order.pyramid&&order.pyramid.entry3?{...order.pyramid.entry3,name:'三仓'}:null;
+                const addReached=takenTps.size===0&&nextEntry&&(isLong?marketPrice>=nextEntry.price:marketPrice<=nextEntry.price);
+                const mtfOk=Boolean(data.multi_tf_confirm&&data.multi_tf_confirm.confirmed);
+                const adxOk=Number(data.adx)>=20;
+                const qualityOk=Boolean(data.market_quality&&data.market_quality.tradeable);
+                const oi=data.open_interest||{};
+                const oiOk=oi.regime===(isLong?'new_longs':'new_shorts');
+                if(addReached){
+                    const missing=[];
+                    if(!profitable)missing.push('当前仓位尚未盈利');
+                    if(!mtfOk)missing.push('1H与4H未同向');
+                    if(!adxOk)missing.push('ADX低于20');
+                    if(!qualityOk)missing.push('执行质量未通过');
+                    if(!oiOk)missing.push(oi.regime==='collecting'?'OI仍在积累5分钟样本':'OI未显示新增资金顺势进入');
+                    if(missing.length===0){
+                        setDecisionView({action:'允许盈利加仓',color:'#9b59b6',subtitle:`${nextEntry.name}触发，四项确认均通过`,meta:[...commonMeta,['本次加仓',`${nextEntry.pct}% · ${decisionPrice(nextEntry.price)}`]],reasons:['持仓处于盈利状态','多周期同向且ADX≥20','盘口可执行，OI显示新增资金顺势进入'],next:'确认后增加计划仓位；原止损不得放宽',buttonText:`确认加仓 ${nextEntry.pct}%`,buttonAction:confirmPyramidAdd});return;
+                    }
+                    setDecisionView({action:'等待，不加仓',color:'#f39c12',subtitle:'价格到了加仓位，但确认条件不完整',meta:commonMeta,reasons:missing,next:'等待缺失条件通过；亏损仓绝不补仓'});return;
+                }
+                const nextTarget=takenTps.has('TP2')?order.tp3:takenTps.has('TP1')?order.tp2:order.tp1;
+                setDecisionView({action:'继续持有',color:'#3498db',subtitle:'止损、止盈和加仓条件均未触发',meta:commonMeta,reasons:[profitable?'当前持仓处于盈利区':'当前尚未盈利，禁止补仓',mtfOk?'多周期方向仍确认':'多周期确认转弱，警惕提前退出',oi.note||'等待OI结构确认'],next:takenTps.size?`已执行分批止盈，不再加仓；等待下一目标 ${decisionPrice(nextTarget)}`:nextEntry?`盈利运行至 ${decisionPrice(nextEntry.price)} 后，再检查多周期、ADX、盘口和OI`:`等待 TP1 ${decisionPrice(order.tp1)} 或止损 ${decisionPrice(order.stop_loss)}`});return;
+            }
+            const tp=data.trade_plan||{};
+            if(tp.direction!=='neutral'){
+                const portfolio=evaluatePortfolioRisk(data);
+                if(portfolio.allowed){
+                    const firstMargin=Number(tp.margin_amount||0)*0.5;
+                    const entry2=tp.pyramid&&tp.pyramid.entry2&&tp.pyramid.entry2.price;
+                    setDecisionView({action:`首仓做${tp.direction==='long'?'多':'空'}`,color:tp.direction==='long'?'#2ecc71':'#e74c3c',subtitle:'交易条件与组合风控均通过，仅先开计划仓位的50%',meta:[['品种',symbol],['首仓保证金',`${firstMargin.toFixed(2)} USDT`],['入场 / 止损',`${decisionPrice(tp.entry)} / ${decisionPrice(tp.stop_loss)}`],['计划总风险',`${Number(tp.risk_amount||0).toFixed(2)} USDT`]],reasons:[data.multi_tf_confirm&&data.multi_tf_confirm.reason||'多周期确认通过',`ADX ${Number(data.adx).toFixed(0)} · 信号质量 ${data.signal_quality}分`,data.market_quality&&data.market_quality.reason||'执行质量通过'],next:`首仓后只在盈利运行至 ${decisionPrice(entry2)} 且OI确认时加仓`,buttonText:'记录首仓 50%',buttonAction:placeOrder});return;
+                }
+                setDecisionView({action:'禁止开仓',color:'#e74c3c',subtitle:'信号存在，但账户组合风险不允许增加敞口',meta:[['品种',symbol],['候选方向',tp.direction_text],['入场',decisionPrice(tp.entry)],['止损',decisionPrice(tp.stop_loss)]],reasons:portfolio.reasons.slice(0,3),next:'先降低现有持仓风险或等待日亏损熔断解除'});return;
+            }
+            const reasons=(data.risk_gate&&data.risk_gate.reasons)||tp.blocked_reasons||[tp.message||'当前没有可执行信号'];
+            const candidate=tp.candidate_direction;
+            const hardBlock=reasons.some(reason=>/盘口|点差|成交额|数据过期|不可用|资金费率|拥挤/.test(reason));
+            setDecisionView({action:hardBlock?'禁止交易':'等待确认',color:hardBlock?'#e74c3c':'#f39c12',subtitle:candidate?`候选方向：${candidate==='long'?'做多':'做空'}，但尚未达到执行标准`:'当前没有足够优势',meta:[['品种',symbol],['综合评分',`${data.score}分`],['ADX',Number(data.adx).toFixed(0)],['执行质量',data.market_quality&&data.market_quality.tradeable?'通过':'未通过']],reasons:reasons.slice(0,3),next:blockedNextStep(reasons)});
+        }
         
         function filterSymbols(){
             const q = document.getElementById('symbolSearch').value.toLowerCase();
@@ -411,6 +567,7 @@
             document.getElementById('currentPrice').textContent='--';
             document.getElementById('priceChange').textContent='请重新预测';
             document.getElementById('result').style.display='none';
+            renderDecisionLoading(id);
             hideDropdown();
             if(wsConnected)subscribeSymbol(id);
             predict();
@@ -577,6 +734,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 if(fearGreedData)d.fear_greed=fearGreedData;
                 currentData=d;
                 updateScoreDetail(d);
+                renderDecisionCockpit(d);
                 
                 // 渲染补仓/平仓提醒卡片
                 try{renderPyramidCard(d)}catch(e){console.log('renderPyramidCard error:',e)}
@@ -760,6 +918,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         function getOrders(){try{return JSON.parse(localStorage.getItem('cp_orders')||'[]')}catch(e){return[]}}
         function saveOrders(orders){localStorage.setItem('cp_orders',JSON.stringify(orders))}
         function orderNotional(order){
+            if(Number.isFinite(order.filled_notional))return order.filled_notional;
             if(Number.isFinite(order.notional_value))return order.notional_value;
             return 1000*(order.position_pct||0)/100*(order.leverage||1);
         }
@@ -773,13 +932,15 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const openOrders=orders.filter(o=>o.status==='open'&&o.symbol===selectedSymbol);
             if(openOrders.length===0){alert('当前币种没有持仓');return}
             const order=openOrders[0];
-            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, currentData?currentData.current_price:order.entry);
+            const suggestedPrice=markPrices[order.symbol]||livePrices[order.symbol]||(currentData&&currentData.symbol===order.symbol?currentData.current_price:null)||order.entry;
+            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, suggestedPrice);
             if(!price)return;
             const closePrice=parseFloat(price);
             if(!Number.isFinite(closePrice)||closePrice<=0){alert('请输入有效的平仓价格');return}
             const pnlPct=order.direction==='long'?(closePrice-order.entry)/order.entry*100:(order.entry-closePrice)/order.entry*100;
-            const pnl=pnlPct/100*orderNotional(order)-orderRoundtripCost(order);
-            const netPnlPct=pnl/orderNotional(order)*100;
+            const openNotional=orderNotional(order);
+            const pnl=pnlPct/100*openNotional-orderRoundtripCost(order)+Number(order.realized_pnl||0);
+            const netPnlPct=pnl/Number(order.planned_notional_value||order.notional_value||openNotional)*100;
             order.status='closed';
             order.close_price=closePrice;
             order.close_time=new Date().toISOString();
@@ -792,7 +953,13 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             delete alertedLevels[order.id];
             // 刷新按钮状态
             document.getElementById('closeOrderBtn').style.display='none';
-            document.getElementById('placeOrderBtn').style.display='inline-block';
+            if(currentData){
+                const canOpen=currentData.trade_plan.direction!=='neutral'&&evaluatePortfolioRisk(currentData).allowed;
+                document.getElementById('placeOrderBtn').style.display=canOpen?'inline-block':'none';
+                renderPyramidCard(currentData);
+                renderDecisionCockpit(currentData);
+            }
+            if(currentHistoryTab==='orders')renderOrders();
             alert(`✅ 平仓成功！\n\n扣除预估手续费与滑点后：${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n净收益率: ${netPnlPct>=0?'+':''}${netPnlPct.toFixed(2)}%\n\n记录已保存，可在历史→下单记录查看`);
         }
         
@@ -824,6 +991,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 margin_pct:tp.margin_pct,
                 margin_amount:tp.margin_amount,
                 notional_value:tp.notional_value,
+                planned_notional_value:tp.notional_value,
+                filled_notional:tp.notional_value*0.5,
+                filled_pct:50,
+                initial_entry:tp.entry,
                 account_settings:{...getRiskSettings()},
                 risk_reward:tp.risk_reward,
                 risk_amount:tp.risk_amount,
@@ -876,11 +1047,95 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             document.getElementById('placeOrderBtn').textContent='✓ 已记录';
             document.getElementById('placeOrderBtn').style.background='#525f7a';
             setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='记录模拟交易';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
-            // 自动打开历史面板并切换到下单记录
-            document.getElementById('historyPanel').style.display='block';
-            switchHistoryTab('orders');
-            // 滚动到历史面板
-            document.getElementById('historyPanel').scrollIntoView({behavior:'smooth',block:'start'});
+            document.getElementById('placeOrderBtn').style.display='none';
+            document.getElementById('closeOrderBtn').style.display='inline-block';
+            renderPyramidCard(d);
+            renderDecisionCockpit(d);
+            alert('✅ 首仓已记录：当前只使用计划仓位的50%。\n\n后续只有在盈利、趋势和OI同时确认时，驾驶舱才会允许加仓。');
+        }
+
+        function confirmPyramidAdd(){
+            if(!currentData)return;
+            const orders=getOrders();
+            const order=orders.find(o=>o.status==='open'&&o.symbol===selectedSymbol);
+            if(!order||!order.pyramid){alert('当前没有可加仓的持仓');return}
+            const filledPct=Number.isFinite(Number(order.filled_pct))?Number(order.filled_pct):100;
+            const level=filledPct<80&&order.pyramid.entry2?order.pyramid.entry2:filledPct<100&&order.pyramid.entry3?order.pyramid.entry3:null;
+            if(!level){alert('计划仓位已全部完成');return}
+            const marketPrice=Number(markPrices[order.symbol]||(currentData.mark_price&&currentData.mark_price.price)||currentData.current_price);
+            const isLong=order.direction==='long';
+            const profitable=isLong?marketPrice>order.entry:marketPrice<order.entry;
+            const oi=currentData.open_interest||{};
+            const confirmed=profitable&&currentData.multi_tf_confirm&&currentData.multi_tf_confirm.confirmed&&Number(currentData.adx)>=20&&currentData.market_quality&&currentData.market_quality.tradeable&&oi.regime===(isLong?'new_longs':'new_shorts');
+            if(!confirmed){alert('加仓条件已经变化，请等待驾驶舱重新确认。亏损仓禁止补仓。');renderDecisionCockpit(currentData);return}
+            if(!confirm(`确认按计划增加 ${level.pct}% 仓位？\n成交参考价 ${decisionPrice(level.price)}\n原止损不会放宽。`))return;
+            const planned=Number(order.planned_notional_value||order.notional_value||0);
+            const oldNotional=orderNotional(order);
+            const addNotional=planned*Number(level.pct)/100;
+            const newNotional=oldNotional+addNotional;
+            order.entry=(oldNotional*order.entry+addNotional*Number(level.price))/newNotional;
+            order.filled_notional=newNotional;
+            order.filled_pct=Math.min(100,filledPct+Number(level.pct));
+            order.last_add_time=new Date().toISOString();
+            saveOrders(orders);
+            renderOrders();
+            renderDecisionCockpit(currentData);
+            alert(`✅ 已记录盈利加仓 ${level.pct}%\n当前完成计划仓位 ${order.filled_pct}%\n新持仓均价 ${decisionPrice(order.entry)}`);
+        }
+
+        function confirmTakeProfit(){
+            if(!currentData)return;
+            const orders=getOrders();
+            const order=orders.find(o=>o.status==='open'&&o.symbol===selectedSymbol);
+            if(!order){alert('当前币种没有持仓');return}
+            const price=Number(markPrices[order.symbol]||(currentData.mark_price&&currentData.mark_price.price)||currentData.current_price);
+            const isLong=order.direction==='long';
+            const levels=[
+                {name:'TP1',price:order.tp1,pct:Number(order.tp1_close_pct||30)},
+                {name:'TP2',price:order.tp2,pct:Number(order.tp2_close_pct||30)},
+                {name:'TP3',price:order.tp3,pct:Number(order.tp3_close_pct||40)},
+            ];
+            const reached=levels.filter(level=>isLong?price>=level.price:price<=level.price);
+            if(reached.length===0){alert('当前价格尚未触发止盈目标');renderDecisionCockpit(currentData);return}
+            const target=reached[reached.length-1];
+            const taken=new Set(order.taken_tp_levels||[]);
+            const pending=levels.slice(0,levels.findIndex(level=>level.name===target.name)+1).filter(level=>!taken.has(level.name));
+            if(pending.length===0){renderDecisionCockpit(currentData);return}
+            const remainingPlanPct=Number(order.remaining_exit_pct??100);
+            const planClosePct=target.name==='TP3'?remainingPlanPct:pending.reduce((sum,level)=>sum+level.pct,0);
+            const currentNotional=orderNotional(order);
+            const closeFraction=Math.min(1,planClosePct/Math.max(remainingPlanPct,1));
+            const closeNotional=currentNotional*closeFraction;
+            if(!confirm(`${target.name} 已触发，确认按计划止盈 ${planClosePct}%？\n参考成交价 ${decisionPrice(price)}\n剩余仓位继续执行原止损。`))return;
+            const pnlPct=isLong?(price-order.entry)/order.entry*100:(order.entry-price)/order.entry*100;
+            const settings=order.account_settings||defaultRiskSettings;
+            const cost=closeNotional*((Number(settings.fee_pct)||0)+(Number(settings.slippage_pct)||0))*2/100;
+            const legPnl=pnlPct/100*closeNotional-cost;
+            order.realized_pnl=Number(order.realized_pnl||0)+legPnl;
+            order.filled_notional=Math.max(0,currentNotional-closeNotional);
+            order.remaining_exit_pct=Math.max(0,remainingPlanPct-planClosePct);
+            order.taken_tp_levels=[...taken,...pending.map(level=>level.name)];
+            order.partial_exits=[...(order.partial_exits||[]),{level:target.name,price,time:new Date().toISOString(),notional:closeNotional,pnl:legPnl}];
+            if(order.filled_notional<0.01||target.name==='TP3'){
+                order.status='closed';
+                order.close_price=price;
+                order.close_time=new Date().toISOString();
+                order.close_time_str=new Date().toLocaleString('zh-CN');
+                order.pnl=Math.round(order.realized_pnl*100)/100;
+                const basis=Number(order.planned_notional_value||order.notional_value||currentNotional);
+                order.pnl_pct=Math.round(order.realized_pnl/basis*10000)/100;
+                order.close_reason='按计划分批止盈完成';
+            }
+            saveOrders(orders);
+            renderOrders();
+            renderPyramidCard(currentData);
+            renderDecisionCockpit(currentData);
+            if(order.status==='closed'){
+                document.getElementById('closeOrderBtn').style.display='none';
+                alert(`✅ ${target.name} 全部止盈完成\n累计净盈亏 ${order.realized_pnl>=0?'+':''}${order.realized_pnl.toFixed(2)} USDT`);
+            }else{
+                alert(`✅ 已记录 ${target.name} 分批止盈\n本次净盈亏 ${legPnl>=0?'+':''}${legPnl.toFixed(2)} USDT\n剩余计划仓位 ${order.remaining_exit_pct}%`);
+            }
         }
         
         function switchHistoryTab(tab){
@@ -999,6 +1254,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             if(currentHistoryTab==='orders'&&document.getElementById('historyPanel').style.display!=='none'){
                 renderOrders();
             }
+            if(currentData)renderDecisionCockpit(currentData);
         }
         
         function checkOrderAlerts(order, currentPrice){
@@ -1008,17 +1264,18 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const symbol=order.symbol.replace('-USDT-SWAP','');
             const isLong=order.direction==='long';
             
-            // 检查各个关键价位（包括补仓位）
+            // 检查各个关键价位（包括下一计划加仓位）
             const levels=[
                 {name:'止损', price:order.stop_loss, type:'danger', pct:0.3},
                 {name:'TP1', price:order.tp1, type:'success', pct:0.3},
                 {name:'TP2', price:order.tp2, type:'success', pct:0.3},
                 {name:'TP3', price:order.tp3, type:'success', pct:0.3},
             ];
-            // 添加补仓位提醒
+            // 只提醒尚未执行的下一个盈利加仓位，最终是否执行由驾驶舱确认
             if(order.pyramid){
-                if(order.pyramid.entry2) levels.push({name:'补仓二仓', price:order.pyramid.entry2.price, type:'warning', pct:0.3});
-                if(order.pyramid.entry3) levels.push({name:'补仓三仓', price:order.pyramid.entry3.price, type:'warning', pct:0.3});
+                const filledPct=Number.isFinite(Number(order.filled_pct))?Number(order.filled_pct):100;
+                if(filledPct<80&&order.pyramid.entry2)levels.push({name:'盈利加仓二仓候选',price:order.pyramid.entry2.price,type:'warning',pct:0.3});
+                else if(filledPct<100&&order.pyramid.entry3)levels.push({name:'盈利加仓三仓候选',price:order.pyramid.entry3.price,type:'warning',pct:0.3});
             }
             
             for(const level of levels){
@@ -1101,7 +1358,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             // 根据提醒类型显示标签
             let label = '目标';
             if(levelName.includes('止损')) label = '止损';
-            else if(levelName.includes('补仓')) label = '补仓位';
+            else if(levelName.includes('加仓')) label = '加仓候选位';
             else if(levelName.includes('TP')) label = '止盈';
             const alertHtml=`<div style="padding:6px 8px;background:${color}22;border-left:3px solid ${color};border-radius:4px;margin-bottom:4px;font-size:11px">
                 <span style="color:${color};font-weight:700">🚨 ${levelName}</span>
@@ -1191,13 +1448,17 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const orders=getOrders();
             const order=orders.find(o=>o.id===id);
             if(!order)return;
-            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, order.entry);
+            const suggestedPrice=markPrices[order.symbol]||livePrices[order.symbol]||(currentData&&currentData.symbol===order.symbol?currentData.current_price:null)||order.entry;
+            const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, suggestedPrice);
             if(!price)return;
-            const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
-            const pnl=pnlPct/100*orderNotional(order)-orderRoundtripCost(order);
-            const netPnlPct=pnl/orderNotional(order)*100;
+            const closePrice=parseFloat(price);
+            if(!Number.isFinite(closePrice)||closePrice<=0){alert('请输入有效的平仓价格');return}
+            const pnlPct=order.direction==='long'?(closePrice-order.entry)/order.entry*100:(order.entry-closePrice)/order.entry*100;
+            const openNotional=orderNotional(order);
+            const pnl=pnlPct/100*openNotional-orderRoundtripCost(order)+Number(order.realized_pnl||0);
+            const netPnlPct=pnl/Number(order.planned_notional_value||order.notional_value||openNotional)*100;
             order.status='closed';
-            order.close_price=parseFloat(price);
+            order.close_price=closePrice;
             order.close_time=new Date().toISOString();
             order.close_time_str=new Date().toLocaleString('zh-CN');
             order.pnl=Math.round(pnl*100)/100;
@@ -1216,13 +1477,14 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             updateLivePrices();
             // 刷新金字塔卡片
             if(currentData)try{renderPyramidCard(currentData)}catch(e){}
+            if(currentData)renderDecisionCockpit(currentData);
             // 刷新按钮状态
             const hasOpenOrder=getOrders().some(o=>o.status==='open'&&o.symbol===selectedSymbol);
             document.getElementById('closeOrderBtn').style.display=hasOpenOrder?'inline-block':'none';
             if(!hasOpenOrder&&currentData&&currentData.trade_plan.direction!=='neutral'){
                 document.getElementById('placeOrderBtn').style.display='inline-block';
             }
-            alert(`✅ 平仓成功！\n\n盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n收益率: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%\n\n完整记录已保存`);
+            alert(`✅ 平仓成功！\n\n累计净盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n净收益率: ${netPnlPct>=0?'+':''}${netPnlPct.toFixed(2)}%\n\n完整记录已保存`);
         }
         
         function viewOrderDetail(id){
@@ -1425,9 +1687,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             if(saved){
                 try{
                     const data=JSON.parse(saved);
-                    const panel=document.getElementById('backtestPanel');
                     const result=document.getElementById('backtestResult');
-                    panel.style.display='block';
                     const pnlColor=data.total_pnl>=0?'green':'red';
                     result.innerHTML=`
                         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px">
@@ -1595,6 +1855,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             
             // 渲染补仓/平仓提醒卡片（总是调用）
             renderPyramidCard(d);
+            renderDecisionCockpit(d);
             
             // 更新高级信号
             let advHtml='';
@@ -1643,7 +1904,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const content=document.getElementById('pyramidContent');
             const tp=d.trade_plan;
             const symbol=d.symbol.replace('-USDT-SWAP','');
-            const price=d.current_price;
+            const price=Number(markPrices[d.symbol]||(d.mark_price&&d.mark_price.price)||d.current_price);
             
             card.style.display='block';
             
@@ -1658,11 +1919,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 const entry=openOrder.entry;
                 const atr=openOrder.atr||100;
                 
-                const add2=openOrder.pyramid&&openOrder.pyramid.entry2?openOrder.pyramid.entry2.price:(isLong?entry+atr*0.5:entry-atr*0.5);
-                const add3=openOrder.pyramid&&openOrder.pyramid.entry3?openOrder.pyramid.entry3.price:(isLong?entry+atr:entry-atr);
-                const dist2=Math.abs(price-add2)/add2*100;
-                const dist3=Math.abs(price-add3)/add3*100;
-                const nextAdd = dist2<dist3 ? {price:add2, pct:30, dist:dist2, name:'二仓'} : {price:add3, pct:20, dist:dist3, name:'三仓'};
+                const filledPct=Number.isFinite(Number(openOrder.filled_pct))?Number(openOrder.filled_pct):100;
+                const nextPlan=filledPct<80&&openOrder.pyramid&&openOrder.pyramid.entry2?{...openOrder.pyramid.entry2,name:'二仓'}:filledPct<100&&openOrder.pyramid&&openOrder.pyramid.entry3?{...openOrder.pyramid.entry3,name:'三仓'}:null;
+                const nextAdd=nextPlan?{...nextPlan,dist:Math.abs(price-nextPlan.price)/nextPlan.price*100}:null;
                 
                 const distTp1=Math.abs(price-openOrder.tp1)/openOrder.tp1*100;
                 const distSl=Math.abs(price-openOrder.stop_loss)/openOrder.stop_loss*100;
@@ -1686,10 +1945,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                         </div>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-                        <div style="background:${nextAdd.dist<0.5?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${nextAdd.dist<0.5?'#2ecc71':'#2a3450'}">
-                            <div style="font-size:9px;color:#f39c12;font-weight:600">📈 顺势加仓${nextAdd.name}</div>
-                            <div style="font-size:13px;font-weight:700;color:#fff">$${nextAdd.price.toLocaleString()}</div>
-                            <div style="font-size:9px;color:${nextAdd.dist<0.5?'#2ecc71':'#525f7a'}">${nextAdd.dist<0.5?'🔔 等确认后加仓':'距'+nextAdd.dist.toFixed(1)+'%'}</div>
+                        <div style="background:${nextAdd&&nextAdd.dist<0.5?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${nextAdd&&nextAdd.dist<0.5?'#2ecc71':'#2a3450'}">
+                            <div style="font-size:9px;color:#f39c12;font-weight:600">📈 ${nextAdd?'盈利加仓'+nextAdd.name:'计划仓位已完成'}</div>
+                            <div style="font-size:13px;font-weight:700;color:#fff">${nextAdd?'$'+nextAdd.price.toLocaleString():filledPct+'%'}</div>
+                            <div style="font-size:9px;color:${nextAdd&&nextAdd.dist<0.5?'#2ecc71':'#525f7a'}">${nextAdd?(nextAdd.dist<0.5?'🔔 等四项确认':'距'+nextAdd.dist.toFixed(1)+'%'):'不再加仓'}</div>
                         </div>
                         <div style="background:${distTp1<0.3?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${distTp1<0.3?'#2ecc71':'#2a3450'}">
                             <div style="font-size:9px;color:#2ecc71;font-weight:600">💰 TP1止盈</div>
@@ -1738,7 +1997,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                     <div style="background:#131a2b;border-radius:8px;padding:10px;border-left:3px solid #f39c12">
-                        <div style="font-size:11px;color:#f39c12;font-weight:600;margin-bottom:6px">📥 计划补仓位</div>
+                        <div style="font-size:11px;color:#f39c12;font-weight:600;margin-bottom:6px">📥 计划盈利加仓位</div>
                         <div style="font-size:18px;font-weight:800;color:#fff">$${nextAdd.price.toLocaleString()}</div>
                         <div style="font-size:10px;color:#8892b0;margin-top:2px">${nextAdd.name} · 仓位${nextAdd.pct}%</div>
                     </div>
@@ -1763,6 +2022,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         
         window.addEventListener('load',()=>{
             loadRiskSettings();
+            loadProfessionalMode();
             document.getElementById('symbolSearch').value = allSymbols[0].name;
             predict();
             renderAlerts();
