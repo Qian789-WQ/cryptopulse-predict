@@ -401,7 +401,7 @@
             if(open.length>=s.max_open_positions)reasons.push(`已达到最大同时持仓${s.max_open_positions}笔`);
             const totalRisk=open.reduce((sum,o)=>sum+(o.risk_amount||0),0)+(tp.risk_amount||0);
             if(totalRisk>s.account_size*s.max_total_risk_pct/100+0.001)reasons.push(`组合止损风险${totalRisk.toFixed(2)}超过上限${(s.account_size*s.max_total_risk_pct/100).toFixed(2)} USDT`);
-            const directionExposure=open.filter(o=>o.direction===tp.direction).reduce((sum,o)=>sum+orderNotional(o),0)+(tp.notional_value||0);
+            const directionExposure=open.filter(o=>o.direction===tp.direction).reduce((sum,o)=>sum+orderReservedNotional(o),0)+(tp.notional_value||0);
             if(directionExposure>s.account_size*s.max_direction_exposure_pct/100+0.001)reasons.push(`${tp.direction_text}敞口$${directionExposure.toFixed(0)}超过上限`);
             const today=new Date().toDateString();
             const dailyPnl=orders.filter(o=>o.status==='closed'&&o.close_time&&new Date(o.close_time).toDateString()===today).reduce((sum,o)=>sum+(o.pnl||0),0);
@@ -413,7 +413,7 @@
         function getPortfolioCapacity(data,leverage){
             const s=getRiskSettings(),orders=getOrders(),open=orders.filter(o=>o.status==='open'),tp=data.trade_plan;
             const openRisk=open.reduce((sum,o)=>sum+Number(o.max_loss_amount||o.risk_amount||0),0);
-            const sameDirection=open.filter(o=>o.direction===tp.direction).reduce((sum,o)=>sum+orderNotional(o),0);
+            const sameDirection=open.filter(o=>o.direction===tp.direction).reduce((sum,o)=>sum+orderReservedNotional(o),0);
             const totalRiskLimit=s.account_size*s.max_total_risk_pct/100;
             const directionLimit=s.account_size*s.max_direction_exposure_pct/100;
             const today=new Date().toDateString();
@@ -425,7 +425,8 @@
             if(group!==data.symbol.split('-')[0]&&sameGroup>=2)hardReasons.push(`同方向高相关持仓已达${sameGroup}笔`);
             const maxRisk=Math.max(0,Math.min(signalRiskCap(data),totalRiskLimit-openRisk));
             const maxNotional=Math.max(0,directionLimit-sameDirection);
-            return {allowed:hardReasons.length===0&&maxRisk>0&&maxNotional>0,hardReasons,maxRisk,maxNotional,maxMargin:maxNotional/Math.max(1,leverage),openRisk,sameDirection,totalRiskLimit,directionLimit};
+            const maxMargin=maxNotional/Math.max(1,leverage);
+            return {allowed:hardReasons.length===0&&maxRisk>=0.01&&maxMargin>=0.01,hardReasons,maxRisk,maxNotional,maxMargin,openRisk,sameDirection,totalRiskLimit,directionLimit};
         }
         function renderPortfolioRisk(data){
             const el=document.getElementById('portfolioRisk');
@@ -439,15 +440,18 @@
                 return {allowed:false,reasons:['当前币种已有持仓'],total_risk:totalRisk,direction_exposure:directionExposure};
             }
             const risk=evaluatePortfolioRisk(data);
+            const capacity=data.trade_plan.direction!=='neutral'?getPortfolioCapacity(data,recommendedLeverageForData(data)):null;
+            const amountAdjustable=!risk.allowed&&risk.reasons.length>0&&risk.reasons.every(reason=>/组合止损风险|敞口/.test(reason))&&capacity&&capacity.allowed;
             el.style.display='block';
-            el.style.background=risk.allowed?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)';
-            el.style.color=risk.allowed?'#2ecc71':'#e74c3c';
-            el.textContent=risk.allowed?`✓ 组合风控通过 · 总风险$${risk.total_risk.toFixed(2)} · 同向敞口$${risk.direction_exposure.toFixed(0)}`:`⛔ 组合风控：${risk.reasons.join('；')}`;
-            return risk;
+            el.style.background=risk.allowed?'rgba(46,204,113,0.1)':amountAdjustable?'rgba(243,156,18,0.1)':'rgba(231,76,60,0.1)';
+            el.style.color=risk.allowed?'#2ecc71':amountAdjustable?'#f39c12':'#e74c3c';
+            el.textContent=risk.allowed?`✓ 组合风控通过 · 总风险$${risk.total_risk.toFixed(2)} · 同向计划敞口$${risk.direction_exposure.toFixed(0)}`:amountAdjustable?`⚠️ 默认仓位超额，将自动缩至：风险$${capacity.maxRisk.toFixed(2)} · 名义$${capacity.maxNotional.toFixed(0)}`:`⛔ 组合风控：${risk.reasons.join('；')}`;
+            return amountAdjustable?{...risk,allowed:true,auto_clamp:true}:risk;
         }
         function actualTradePlanHtml(order){
             const actualNotional=orderNotional(order),actualMargin=marginForNotional(order,actualNotional);
-            return `<div style="margin-bottom:8px;padding:7px;border:1px solid #3498db;color:#b9dcff;border-radius:6px">📌 以下为已记录持仓，不再显示模型默认仓位</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px"><div>方向: <strong style="color:${order.direction==='long'?'#2ecc71':'#e74c3c'}">${order.direction_text}</strong></div><div>完成计划: <strong>${order.filled_pct}%</strong></div><div>本次资金上限: <strong>${Number(order.requested_margin||order.margin_amount).toFixed(2)} USDT</strong></div><div>最大亏损: <strong style="color:#e74c3c">${Number(order.max_loss_amount||order.risk_amount).toFixed(2)} USDT</strong></div><div>当前保证金: <strong>${actualMargin.toFixed(2)} USDT</strong></div><div>当前名义仓位: <strong>${actualNotional.toFixed(2)} USDT</strong></div><div>持仓均价: <strong>${decisionPrice(order.entry)}</strong></div><div>止损: <strong style="color:#e74c3c">${decisionPrice(order.stop_loss)}</strong></div><div>TP1(平${order.tp1_close_pct}%): <strong style="color:#2ecc71">${decisionPrice(order.tp1)}</strong></div><div>杠杆: <strong>${orderLeverage(order)}x</strong></div></div>`;
+            const plannedMargin=marginForNotional(order,Number(order.planned_notional_value||order.notional_value||0));
+            return `<div style="margin-bottom:8px;padding:7px;border:1px solid #3498db;color:#b9dcff;border-radius:6px">📌 以下为已记录持仓，不再显示模型默认仓位</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px"><div>方向: <strong style="color:${order.direction==='long'?'#2ecc71':'#e74c3c'}">${order.direction_text}</strong></div><div>完成计划: <strong>${order.filled_pct}%</strong></div><div>用户输入上限: <strong>${Number(order.requested_margin||order.margin_amount).toFixed(2)} USDT</strong></div><div>系统采用总保证金: <strong>${plannedMargin.toFixed(2)} USDT</strong></div><div>最大亏损: <strong style="color:#e74c3c">${Number(order.max_loss_amount||order.risk_amount).toFixed(2)} USDT</strong></div><div>当前保证金: <strong>${actualMargin.toFixed(2)} USDT</strong></div><div>当前名义仓位: <strong>${actualNotional.toFixed(2)} USDT</strong></div><div>持仓均价: <strong>${decisionPrice(order.entry)}</strong></div><div>止损: <strong style="color:#e74c3c">${decisionPrice(order.stop_loss)}</strong></div><div>TP1(平${order.tp1_close_pct}%): <strong style="color:#2ecc71">${decisionPrice(order.tp1)}</strong></div><div>杠杆: <strong>${orderLeverage(order)}x</strong></div></div>`;
         }
         function orderNetPnlAtPrice(order,price){
             const grossPct=order.direction==='long'?(Number(price)-Number(order.entry))/Number(order.entry):(Number(order.entry)-Number(price))/Number(order.entry);
@@ -466,6 +470,18 @@
             document.getElementById('placeOrderBtn').style.display='none';
             document.getElementById('closeOrderBtn').style.display='inline-block';
             return true;
+        }
+        function renderHoldingTimeDetails(data){
+            const order=getOrders().find(o=>o.status==='open'&&o.symbol===data.symbol);
+            const ht=order&&order.holding_time?order.holding_time:data.holding_time;
+            if(!ht)return;
+            const holdVal=document.getElementById('holdVal'),holdDetail=document.getElementById('holdDetail');
+            if(holdVal)holdVal.textContent=ht.min_text+'~'+ht.max_text;
+            if(holdDetail)holdDetail.textContent='平均'+ht.avg_text+' · 波动系数'+ht.volatility_factor+' · 趋势系数'+ht.trend_factor;
+            const reminder=document.getElementById('holdingReminder'),text=document.getElementById('holdingText');
+            const visible=Boolean(order)||data.trade_plan.direction!=='neutral';
+            if(reminder)reminder.style.display=visible?'flex':'none';
+            if(text&&visible)text.textContent=`⏰ 建议持仓 ${ht.min_text}~${ht.max_text}，点击设置提醒`;
         }
 
         function toggleProfessionalMode(force){
@@ -921,6 +937,7 @@ document.getElementById('tradePlan').innerHTML=activeTradeOrder?actualTradePlanH
                 updateScoreDetail(d);
                 renderDecisionCockpit(d);
                 renderActiveOrderDetails(d);
+                renderHoldingTimeDetails(d);
                 
                 // 渲染补仓/平仓提醒卡片
                 try{renderPyramidCard(d)}catch(e){console.log('renderPyramidCard error:',e)}
@@ -1026,7 +1043,8 @@ document.getElementById('tradePlan').innerHTML=activeTradeOrder?actualTradePlanH
         // 持仓时间提醒
         let holdingAlarm=null;
         function setHoldingAlarm(){
-            const ht=currentData&&currentData.holding_time;
+            const active=currentData&&getOrders().find(o=>o.status==='open'&&o.symbol===currentData.symbol);
+            const ht=active&&active.holding_time?active.holding_time:currentData&&currentData.holding_time;
             if(!ht){alert('请先获取预测数据');return}
             const minutes=ht.avg_minutes||60;
             if(holdingAlarm)clearTimeout(holdingAlarm);
@@ -1110,6 +1128,10 @@ document.getElementById('tradePlan').innerHTML=activeTradeOrder?actualTradePlanH
             if(Number.isFinite(order.filled_notional))return order.filled_notional;
             if(Number.isFinite(order.notional_value))return order.notional_value;
             return 1000*(order.position_pct||0)/100*(order.leverage||1);
+        }
+        function orderReservedNotional(order){
+            const planned=Number(order.planned_notional_value||order.notional_value);
+            return Number.isFinite(planned)&&planned>0?planned:orderNotional(order);
         }
         function orderRoundtripCost(order){
             const s=order.account_settings||defaultRiskSettings;
@@ -1561,8 +1583,11 @@ document.getElementById('tradePlan').innerHTML=activeTradeOrder?actualTradePlanH
             ];
             for(const level of levels){
                 const distance=Math.abs(currentPrice-level.price)/level.price*100;
-                // 距离小于0.3%时提醒
-                if(distance<level.pct && !alertedLevels[key][level.name]){
+                const reached=level.name==='止损'?(isLong?currentPrice<=level.price:currentPrice>=level.price):(isLong?currentPrice>=level.price:currentPrice<=level.price);
+                const armKey=`armed_${level.name}`;
+                // 新订单如果本来就在阈值内，不立刻骚扰；价格先离开再接近时才提示。
+                if(distance>0.6)alertedLevels[key][armKey]=true;
+                if(distance<level.pct&&!reached&&alertedLevels[key][armKey]&&!alertedLevels[key][level.name]){
                     alertedLevels[key][level.name]=true;
                     const msg=`${symbol} ${order.direction_text} ${level.name}提醒\n现价: $${currentPrice.toFixed(2)}\n${level.name}: $${level.price.toFixed(2)}\n距离: ${distance.toFixed(2)}%`;
                     // 浏览器通知
@@ -2203,6 +2228,7 @@ document.getElementById('tradePlan').innerHTML=activeTradeOrder?actualTradePlanH
             }
             closeBtn.style.display=hasOpenOrder?'inline-block':'none';
             renderActiveOrderDetails(d);
+            renderHoldingTimeDetails(d);
         }
         
         function stopAutoUpdate(){
