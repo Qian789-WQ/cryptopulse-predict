@@ -1379,7 +1379,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             },1000);
         }
         
-        function autoUpdatePredict(){
+        async function autoUpdatePredict(){
             isAutoUpdating=true;
             const scrollPos=window.scrollY;
             const symbol=selectedSymbol;
