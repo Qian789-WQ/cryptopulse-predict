@@ -1078,7 +1078,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <span>止损: $${o.stop_loss.toLocaleString()}</span>
                         <span>TP1: $${o.tp1.toLocaleString()}</span>
                         <span>TP3: $${o.tp3.toLocaleString()}</span>
-                        <span>评分: ${o.score}分 (${o.strength_text})</span>
+                        <span>评分: ${o.score}分${o.strength_text?' ('+o.strength_text+')':''}</span>
                         <span>胜率: ${o.win_rate}%</span>
                         <span>RSI: ${o.rsi.toFixed(0)} ADX: ${o.adx.toFixed(0)}</span>
                         <span>杠杆: ${o.leverage}x 仓位: ${o.position_pct}%</span>
@@ -1121,6 +1121,16 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             }
             saveOrders(orders);
             renderOrders();
+            // 刷新监控状态
+            updateLivePrices();
+            // 刷新金字塔卡片
+            if(currentData)try{renderPyramidCard(currentData)}catch(e){}
+            // 刷新按钮状态
+            const hasOpenOrder=getOrders().some(o=>o.status==='open'&&o.symbol===selectedSymbol);
+            document.getElementById('closeOrderBtn').style.display=hasOpenOrder?'inline-block':'none';
+            if(!hasOpenOrder&&currentData&&currentData.trade_plan.direction!=='neutral'){
+                document.getElementById('placeOrderBtn').style.display='inline-block';
+            }
             alert(`✅ 平仓成功！\n\n盈亏: ${pnl>=0?'+':''}${pnl.toFixed(2)} USDT\n收益率: ${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%\n\n完整记录已保存`);
         }
         
