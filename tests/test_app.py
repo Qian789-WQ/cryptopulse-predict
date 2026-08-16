@@ -155,14 +155,18 @@ class RouteTests(unittest.TestCase):
         self.assertIn("actual_days", payload)
         self.assertIn("下一根开盘成交", payload["strategy_note"])
         self.assertGreater(payload["fee_rate_pct"], 0)
+        self.assertIn("win_rate_ci", payload)
+        self.assertIn("sample_quality", payload)
+        self.assertIn("expectancy", payload)
 
+    @patch.object(cryptopulse, "get_open_interest_context")
     @patch.object(cryptopulse, "get_data_freshness")
     @patch.object(cryptopulse, "get_market_quality")
     @patch.object(cryptopulse, "get_mark_price")
     @patch.object(cryptopulse, "get_funding_rate")
     @patch.object(cryptopulse, "fetch_klines")
     def test_predict_contract_contains_frontend_fields(
-        self, fetch_klines, funding_rate, mark_price, market_quality, freshness
+        self, fetch_klines, funding_rate, mark_price, market_quality, freshness, open_interest
     ):
         self.login()
         fetch_klines.return_value = (sample_market_data(), None)
@@ -179,6 +183,10 @@ class RouteTests(unittest.TestCase):
             "quote_volume_24h": 10_000_000, "reason": "执行质量正常",
         }
         freshness.return_value = {"stale": False, "age_minutes": 60, "max_age_minutes": 180}
+        open_interest.return_value = {
+            "available": True, "oi_usd": 50_000_000, "change_pct": None,
+            "regime": "collecting", "note": "正在采样",
+        }
         response = self.client.get(
             "/api/predict?symbol=BTC-USDT-SWAP&timeframe=1H"
         )
@@ -188,6 +196,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(plan["time_stop"]["max_holding_minutes"], 300)
         self.assertEqual(response.get_json()["mark_price"]["price"], 129.5)
         self.assertTrue(response.get_json()["market_quality"]["tradeable"])
+        self.assertTrue(response.get_json()["open_interest"]["available"])
         self.assertIn("lower", response.get_json()["prediction"])
         self.assertEqual(fetch_klines.call_count, 5)
 
@@ -204,6 +213,22 @@ class RouteTests(unittest.TestCase):
         self.assertAlmostEqual(quality["spread_pct"], 0.2, places=3)
         self.assertEqual(quality["quote_volume_24h"], 2_000_000)
         self.assertFalse(quality["tradeable"])
+
+    @patch.object(cryptopulse, "fetch_with_retry")
+    def test_open_interest_context_reports_current_usd_value(self, fetch):
+        symbol = "ETH-USDT-SWAP"
+        cryptopulse._cache.pop(f"open_interest_{symbol}", None)
+        cryptopulse._oi_samples.pop(symbol, None)
+        response = Mock()
+        response.json.return_value = {"code": "0", "data": [{
+            "oiCcy": "10000", "oiUsd": "20000000", "ts": "123456789",
+        }]}
+        fetch.return_value = response
+        context = cryptopulse.get_open_interest_context(symbol, 2000, 100_000_000)
+        self.assertTrue(context["available"])
+        self.assertEqual(context["oi_usd"], 20_000_000)
+        self.assertEqual(context["regime"], "collecting")
+        self.assertEqual(context["oi_to_volume_ratio"], 0.2)
 
     def test_risk_settings_are_bounded(self):
         self.login()
@@ -236,6 +261,7 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("economicEvents", html)
         self.assertIn("orderRoundtripCost", html)
         self.assertIn("marketQualityVal", html)
+        self.assertIn("openInterestVal", html)
 
 
 if __name__ == "__main__":

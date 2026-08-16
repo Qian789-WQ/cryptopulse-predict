@@ -15,6 +15,7 @@ import os
 
 # 简单内存缓存
 _cache = {}
+_oi_samples = {}
 _CACHE_TTL = 30  # 缓存30秒
 
 def get_cache(key, ttl=_CACHE_TTL):
@@ -473,6 +474,64 @@ def get_data_freshness(candle_timestamp, timeframe, now_ms=None):
         "age_minutes": round(age_ms / 60_000, 1),
         "max_age_minutes": round(max_age_ms / 60_000, 1),
     }
+
+
+def get_open_interest_context(symbol, current_price, quote_volume_24h=0):
+    """Track public OI snapshots and classify price/OI behavior after enough samples exist."""
+    cache_key = f"open_interest_{symbol}"
+    cached = get_cache(cache_key, ttl=25)
+    if cached is not None:
+        return cached
+    unavailable = {"available": False, "change_pct": None, "regime": "unavailable",
+                   "note": "持仓量数据不可用"}
+    try:
+        resp = fetch_with_retry(
+            "https://www.okx.com/api/v5/public/open-interest",
+            params={"instType": "SWAP", "instId": symbol}, retries=2, timeout=8
+        )
+        payload = resp.json() if resp is not None else {}
+        if payload.get("code") != "0" or not payload.get("data"):
+            return unavailable
+        item = payload["data"][0]
+        oi_ccy = float(item.get("oiCcy") or 0)
+        oi_usd = float(item.get("oiUsd") or 0) or oi_ccy * current_price
+        if oi_usd <= 0:
+            return unavailable
+        now = time.time()
+        samples = _oi_samples.setdefault(symbol, [])
+        samples[:] = [sample for sample in samples if now - sample[0] <= 1800]
+        baseline = next((sample for sample in samples if now - sample[0] >= 300), None)
+        samples.append((now, oi_usd, current_price))
+        change_pct = price_change_pct = None
+        regime, note = "collecting", "正在积累5分钟持仓量样本"
+        if baseline and baseline[1] > 0 and baseline[2] > 0:
+            change_pct = (oi_usd - baseline[1]) / baseline[1] * 100
+            price_change_pct = (current_price - baseline[2]) / baseline[2] * 100
+            if price_change_pct > 0.1 and change_pct > 0.5:
+                regime, note = "new_longs", "价格与OI同升，趋势有新增资金推动"
+            elif price_change_pct > 0.1 and change_pct < -0.5:
+                regime, note = "short_covering", "价格上涨但OI下降，更像空头回补"
+            elif price_change_pct < -0.1 and change_pct > 0.5:
+                regime, note = "new_shorts", "价格下跌且OI增加，新增空头占优"
+            elif price_change_pct < -0.1 and change_pct < -0.5:
+                regime, note = "long_unwind", "价格与OI同降，更像多头去杠杆"
+            else:
+                regime, note = "neutral", "价格与OI变化暂不显著"
+        result = {
+            "available": True,
+            "oi_usd": round(oi_usd, 2),
+            "oi_ccy": round(oi_ccy, 8),
+            "change_pct": round(change_pct, 3) if change_pct is not None else None,
+            "price_change_pct": round(price_change_pct, 3) if price_change_pct is not None else None,
+            "oi_to_volume_ratio": round(oi_usd / quote_volume_24h, 3) if quote_volume_24h else None,
+            "regime": regime,
+            "note": note,
+            "timestamp": int(item.get("ts") or 0),
+        }
+        set_cache(cache_key, result)
+        return result
+    except Exception:
+        return unavailable
 
 
 def candles_to_dataframe(candles):
@@ -1538,6 +1597,9 @@ def api_predict():
         score, reasons = calc_signal_score(df)
         sr = calc_support_resistance(df)
         market_quality = get_market_quality(symbol)
+        open_interest = get_open_interest_context(
+            symbol, market_price, market_quality.get("quote_volume_24h", 0)
+        )
         data_freshness = get_data_freshness(latest["timestamp"], timeframe)
         funding_rate = get_funding_rate(symbol)
         roundtrip_cost_pct = (risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2
@@ -1700,6 +1762,7 @@ def api_predict():
             "mark_price": get_mark_price(symbol),
             "risk_settings": risk_settings,
             "market_quality": market_quality,
+            "open_interest": open_interest,
             "data_freshness": data_freshness,
             "signal_candle_closed": True,
             "signal_candle_timestamp": int(latest["timestamp"]),
@@ -1962,6 +2025,23 @@ def api_backtest():
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
         avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
         profit_factor = abs(sum(t["pnl"] for t in wins) / sum(t["pnl"] for t in losses)) if losses and sum(t["pnl"] for t in losses) != 0 else 0
+        expectancy = sum(t["pnl"] for t in trades) / len(trades) if trades else 0
+        payoff_ratio = avg_win / abs(avg_loss) if avg_loss else 0
+        if trades:
+            n, p, z = len(trades), len(wins) / len(trades), 1.96
+            denominator = 1 + z * z / n
+            center = (p + z * z / (2 * n)) / denominator
+            margin = z * np.sqrt((p * (1 - p) / n) + z * z / (4 * n * n)) / denominator
+            win_rate_ci = [round(max(0, center - margin) * 100, 1),
+                           round(min(1, center + margin) * 100, 1)]
+        else:
+            win_rate_ci = [0, 0]
+        if len(trades) >= 30:
+            sample_quality = {"level": "可参考", "class": "good", "note": "样本达到30笔，但仍需样本外验证"}
+        elif len(trades) >= 10:
+            sample_quality = {"level": "样本偏少", "class": "warning", "note": "少于30笔，胜率波动仍然很大"}
+        else:
+            sample_quality = {"level": "样本不足", "class": "bad", "note": "少于10笔，不应据此判断策略有效"}
         
         return jsonify({
             "symbol": symbol,
@@ -1972,7 +2052,7 @@ def api_backtest():
             "history_truncated": requested_bars > 3000,
             "fee_rate_pct": fee_rate * 100,
             "slippage_rate_pct": slippage_rate * 100,
-            "strategy_note": "收盘信号、下一根开盘成交、ADX过滤、风险仓位、分批止盈、保本止损、5根K线时间止损；不含历史多周期过滤和资金费率",
+            "strategy_note": "简化回测：收盘信号、下一根开盘成交、ADX过滤、风险仓位、分批止盈、保本止损、5根K线时间止损；不含历史多周期、盘口质量、OI和资金费率，不能等同当前实盘门禁",
             "initial_balance": initial_balance,
             "final_balance": round(balance, 2),
             "total_pnl": round(total_pnl, 2),
@@ -1981,8 +2061,12 @@ def api_backtest():
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": round(win_rate, 1),
+            "win_rate_ci": win_rate_ci,
+            "sample_quality": sample_quality,
             "max_drawdown": round(max_drawdown, 2),
             "profit_factor": round(profit_factor, 2),
+            "payoff_ratio": round(payoff_ratio, 2),
+            "expectancy": round(expectancy, 2),
             "avg_win": round(avg_win, 2),
             "avg_loss": round(avg_loss, 2),
             "recent_trades": trades[-10:]

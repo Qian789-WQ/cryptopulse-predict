@@ -259,6 +259,7 @@
                     <div class="ind-item"><div class="label">资金费率</div><div class="value" id="fundVal">--</div></div>
                     <div class="ind-item"><div class="label">标记价格</div><div class="value" id="markPriceVal">--</div></div>
                     <div class="ind-item"><div class="label">执行质量</div><div class="value" id="marketQualityVal">--</div></div>
+                    <div class="ind-item"><div class="label">OI结构</div><div class="value" id="openInterestVal">--</div></div>
                     <div class="ind-item"><div class="label">恐慌贪婪</div><div class="value" id="fearGreedVal">--</div></div>
                 </div>
             </div>
@@ -445,6 +446,10 @@
                 mqEl.textContent=mq&&mq.available?`${mq.tradeable?'优':'差'} · ${mq.spread_pct.toFixed(4)}%`:'不可用';
                 mqEl.className='value '+(mq&&mq.tradeable?'green':'red');
                 mqEl.title=mq&&mq.available?`24h估算成交额 ${compactUsd(mq.quote_volume_24h)} · ${mq.reason} · K线距今${d.data_freshness.age_minutes}分钟`:'缺少盘口快照，禁止记录交易';
+                const oi=d.open_interest,oiEl=document.getElementById('openInterestVal');
+                oiEl.textContent=oi&&oi.available?(oi.change_pct==null?`采集中 · ${compactUsd(oi.oi_usd)}`:`${oi.change_pct>=0?'+':''}${oi.change_pct.toFixed(2)}%`):'不可用';
+                oiEl.className='value '+(oi&&['new_longs','new_shorts'].includes(oi.regime)?'green':oi&&['short_covering','long_unwind'].includes(oi.regime)?'yellow':'');
+                oiEl.title=oi&&oi.available?`${oi.note}${oi.oi_to_volume_ratio!=null?' · OI/24h成交额 '+oi.oi_to_volume_ratio:''}`:'持仓量数据暂不可用';
                 const sc=d.score,scEl=document.getElementById('scoreCircle');scEl.style.setProperty('--score',sc);
                 let col='#f39c12';if(sc>=70)col='#2ecc71';else if(sc>=55)col='#58d68d';else if(sc>=45)col='#f39c12';else if(sc>=30)col='#e67e22';else col='#e74c3c';
                 if(d.risk_gate&&!d.risk_gate.allowed)col='#f39c12';
@@ -1391,9 +1396,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${data.win_rate>=50?'green':'red'}">${data.win_rate}%</div><div style="font-size:10px;color:#525f7a">胜率</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">${data.total_pnl>=0?'+':''}${data.total_pnl_pct}%</div><div style="font-size:10px;color:#525f7a">总收益</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#e74c3c">${data.max_drawdown}%</div><div style="font-size:10px;color:#525f7a">最大回撤</div></div>
-                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">Profit Factor</div></div>
+                        <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${data.expectancy>=0?'green':'red'}">$${data.expectancy}</div><div style="font-size:10px;color:#525f7a">每笔期望</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                     </div>
+                    <div style="padding:8px;border-radius:6px;background:${data.sample_quality.class==='good'?'#2ecc7118':'#e74c3c18'};color:${data.sample_quality.class==='good'?'#2ecc71':'#f39c12'};font-size:11px;margin-bottom:8px">样本质量：${data.sample_quality.level} · 胜率95%区间 ${data.win_rate_ci[0]}%–${data.win_rate_ci[1]}% · ${data.sample_quality.note}</div>
                     <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days}天 / 请求${data.days}天 · ${data.bars_count}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 手续费${data.fee_rate_pct}%/边 · 滑点${data.slippage_rate_pct}%/边<br>${data.strategy_note}</div>
                 `;
                 // 保存回测结果
@@ -1428,9 +1435,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${data.win_rate>=50?'green':'red'}">${data.win_rate}%</div><div style="font-size:10px;color:#525f7a">胜率</div></div>
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">${data.total_pnl>=0?'+':''}${data.total_pnl_pct}%</div><div style="font-size:10px;color:#525f7a">总收益</div></div>
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:#e74c3c">${data.max_drawdown}%</div><div style="font-size:10px;color:#525f7a">最大回撤</div></div>
-                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">Profit Factor</div></div>
+                            <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${(data.expectancy??0)>=0?'green':'red'}">$${data.expectancy??'--'}</div><div style="font-size:10px;color:#525f7a">每笔期望</div></div>
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                         </div>
+                        ${data.sample_quality?`<div style="padding:8px;border-radius:6px;background:${data.sample_quality.class==='good'?'#2ecc7118':'#e74c3c18'};color:${data.sample_quality.class==='good'?'#2ecc71':'#f39c12'};font-size:11px;margin-bottom:8px">样本质量：${data.sample_quality.level} · 胜率95%区间 ${data.win_rate_ci[0]}%–${data.win_rate_ci[1]}% · ${data.sample_quality.note}</div>`:'<div style="color:#f39c12;font-size:11px">旧版结果缺少样本可信度，请重新运行</div>'}
                         <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days??data.days}天 / 请求${data.days}天 · ${data.bars_count??'--'}根K线${data.history_truncated?'（短周期数据已限3000根）':''}<br>${data.strategy_note??'旧版回测结果，建议重新运行'}</div>
                     `;
                 }catch(e){}
@@ -1548,6 +1557,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             if(markEl)markEl.textContent=d.mark_price&&d.mark_price.price?'$'+d.mark_price.price.toLocaleString():'--';
             const mqEl=document.getElementById('marketQualityVal'),mq=d.market_quality;
             if(mqEl){mqEl.textContent=mq&&mq.available?`${mq.tradeable?'优':'差'} · ${mq.spread_pct.toFixed(4)}%`:'不可用';mqEl.className='value '+(mq&&mq.tradeable?'green':'red')}
+            const oiEl=document.getElementById('openInterestVal'),oi=d.open_interest;
+            if(oiEl){oiEl.textContent=oi&&oi.available?(oi.change_pct==null?`采集中 · ${compactUsd(oi.oi_usd)}`:`${oi.change_pct>=0?'+':''}${oi.change_pct.toFixed(2)}%`):'不可用';oiEl.title=oi&&oi.available?oi.note:'持仓量数据暂不可用'}
             if(d.fear_greed){
                 const fgEl=document.getElementById('fearGreedVal');
                 if(fgEl)fgEl.textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
