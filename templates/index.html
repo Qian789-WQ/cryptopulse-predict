@@ -190,6 +190,23 @@
                 </div>
                 <div id="wechatStatus" style="margin-top:6px;font-size:11px"></div>
             </div>
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid #1a2340">
+                <div style="font-size:12px;font-weight:700;color:#8892b0;margin-bottom:8px">🛡️ 账户与组合风控</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:6px">
+                    <label style="font-size:10px;color:#8892b0">账户权益 USDT<input type="number" id="riskAccountSize" value="1000" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">单笔风险 %<input type="number" id="riskPerTrade" value="1" step="0.1" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">最大保证金 %<input type="number" id="riskMaxMargin" value="25" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">最大杠杆<input type="number" id="riskMaxLeverage" value="5" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">手续费 %/边<input type="number" id="riskFee" value="0.05" step="0.01" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">滑点 %/边<input type="number" id="riskSlippage" value="0.02" step="0.01" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">组合总风险上限 %<input type="number" id="riskTotalLimit" value="3" step="0.5" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">单方向敞口上限 %<input type="number" id="riskDirectionLimit" value="100" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">日亏损熔断 %<input type="number" id="riskDailyLoss" value="3" step="0.5" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                    <label style="font-size:10px;color:#8892b0">最大同时持仓<input type="number" id="riskMaxPositions" value="3" style="width:100%;padding:6px;background:#0e1421;border:1px solid #1a2340;border-radius:5px;color:#fff"></label>
+                </div>
+                <button onclick="saveRiskSettings()" style="margin-top:8px;padding:6px 12px;background:#667eea;border:none;border-radius:5px;color:#fff;cursor:pointer">保存并重新预测</button>
+                <span id="riskSettingsStatus" style="margin-left:8px;font-size:10px;color:#525f7a"></span>
+            </div>
         </div>
         <div class="loading" id="loading"><div class="spinner"></div><div>正在分析...</div></div>
         <div class="error" id="error"></div>
@@ -249,6 +266,7 @@
                     <div class="ind-item"><div class="label">信号质量</div><div class="value" id="winRateVal">--</div></div>
                     <div class="ind-item"><div class="label">建议杠杆</div><div class="value" id="levVal">--</div></div>
                     <div class="ind-item"><div class="label">资金费率</div><div class="value" id="fundVal">--</div></div>
+                    <div class="ind-item"><div class="label">标记价格</div><div class="value" id="markPriceVal">--</div></div>
                     <div class="ind-item"><div class="label">恐慌贪婪</div><div class="value" id="fearGreedVal">--</div></div>
                 </div>
             </div>
@@ -269,10 +287,11 @@
                 <div class="card"><div class="card-title">未来5根K线</div><div class="pred-list" id="predList"></div></div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <span><button id="closeOrderBtn" onclick="quickCloseOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(231,76,60,0.3);margin-right:6px">✗ 平仓</button><button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">✓ 已下单</button></span></div>
+                    <div class="card"><div class="card-title" style="display:flex;justify-content:space-between;align-items:center">📋 交易计划 <span><button id="closeOrderBtn" onclick="quickCloseOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(231,76,60,0.3);margin-right:6px">✗ 平仓</button><button id="placeOrderBtn" onclick="placeOrder()" style="padding:5px 14px;background:linear-gradient(135deg,#2ecc71,#27ae60);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;display:none;box-shadow:0 2px 8px rgba(46,204,113,0.3)">记录模拟交易</button></span></div>
                     <div id="signalStrength" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:12px;text-align:center;display:none"></div>
                     <div id="confidenceBar" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="multiTfConfirm" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
+                    <div id="portfolioRisk" style="margin-bottom:8px;padding:6px 10px;border-radius:6px;font-size:11px;display:none"></div>
                     <div id="tradePlan"></div>
                     <div id="trailingStop" style="margin-top:10px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
                     <div id="kellyPos" style="margin-top:6px;padding:8px;background:#131a2b;border-radius:6px;font-size:11px"></div>
@@ -318,6 +337,62 @@
         let selectedSymbol = allSymbols[0].id;
         let currentData = null;
         let predictionRequestId = 0;
+        const defaultRiskSettings={account_size:1000,risk_pct:1,max_margin_pct:25,max_leverage:5,fee_pct:0.05,slippage_pct:0.02,max_total_risk_pct:3,max_direction_exposure_pct:100,daily_loss_limit_pct:3,max_open_positions:3};
+
+        function normalizeRiskSettings(raw){
+            const clamp=(value,fallback,min,max)=>{const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(n,max)):fallback};
+            return {account_size:clamp(raw.account_size,1000,10,100000000),risk_pct:clamp(raw.risk_pct,1,0.1,3),max_margin_pct:clamp(raw.max_margin_pct,25,1,50),max_leverage:Math.round(clamp(raw.max_leverage,5,1,10)),fee_pct:clamp(raw.fee_pct,0.05,0,1),slippage_pct:clamp(raw.slippage_pct,0.02,0,1),max_total_risk_pct:clamp(raw.max_total_risk_pct,3,0.5,10),max_direction_exposure_pct:clamp(raw.max_direction_exposure_pct,100,10,500),daily_loss_limit_pct:clamp(raw.daily_loss_limit_pct,3,0.5,20),max_open_positions:Math.round(clamp(raw.max_open_positions,3,1,20))};
+        }
+        function getRiskSettings(){
+            try{return normalizeRiskSettings({...defaultRiskSettings,...JSON.parse(localStorage.getItem('cp_risk_settings')||'{}')})}catch(e){return {...defaultRiskSettings}}
+        }
+        function riskQuery(){
+            const q=new URLSearchParams();
+            Object.entries(getRiskSettings()).forEach(([key,value])=>q.set(key,value));
+            return q.toString();
+        }
+        function loadRiskSettings(){
+            const s=getRiskSettings(),map={riskAccountSize:'account_size',riskPerTrade:'risk_pct',riskMaxMargin:'max_margin_pct',riskMaxLeverage:'max_leverage',riskFee:'fee_pct',riskSlippage:'slippage_pct',riskTotalLimit:'max_total_risk_pct',riskDirectionLimit:'max_direction_exposure_pct',riskDailyLoss:'daily_loss_limit_pct',riskMaxPositions:'max_open_positions'};
+            Object.entries(map).forEach(([id,key])=>{const el=document.getElementById(id);if(el)el.value=s[key]});
+        }
+        function saveRiskSettings(){
+            const read=(id,fallback)=>{const n=parseFloat(document.getElementById(id).value);return Number.isFinite(n)?n:fallback};
+            const s=normalizeRiskSettings({account_size:read('riskAccountSize',1000),risk_pct:read('riskPerTrade',1),max_margin_pct:read('riskMaxMargin',25),max_leverage:read('riskMaxLeverage',5),fee_pct:read('riskFee',0.05),slippage_pct:read('riskSlippage',0.02),max_total_risk_pct:read('riskTotalLimit',3),max_direction_exposure_pct:read('riskDirectionLimit',100),daily_loss_limit_pct:read('riskDailyLoss',3),max_open_positions:read('riskMaxPositions',3)});
+            localStorage.setItem('cp_risk_settings',JSON.stringify(s));
+            loadRiskSettings();
+            document.getElementById('riskSettingsStatus').textContent='✓ 已保存';
+            predict();
+        }
+        function correlationGroup(symbol){
+            const base=symbol.split('-')[0];
+            if(['BTC','ETH','SOL','BNB','XRP','ADA','DOGE','AVAX','DOT','LINK','LTC'].includes(base))return 'crypto_beta';
+            if(['NVDA','AMD','AAPL','MSFT','META','GOOGL','AMZN','TSLA'].includes(base))return 'us_tech';
+            if(['BABA','JD','PDD','BIDU','NIO','XPEV','LI'].includes(base))return 'china_equity';
+            return base;
+        }
+        function evaluatePortfolioRisk(data){
+            if(!data||data.trade_plan.direction==='neutral')return {allowed:false,reasons:['当前没有可执行交易计划']};
+            const s=getRiskSettings(),orders=getOrders(),open=orders.filter(o=>o.status==='open'),tp=data.trade_plan,reasons=[];
+            if(open.length>=s.max_open_positions)reasons.push(`已达到最大同时持仓${s.max_open_positions}笔`);
+            const totalRisk=open.reduce((sum,o)=>sum+(o.risk_amount||0),0)+(tp.risk_amount||0);
+            if(totalRisk>s.account_size*s.max_total_risk_pct/100)reasons.push(`组合止损风险${totalRisk.toFixed(2)}超过上限${(s.account_size*s.max_total_risk_pct/100).toFixed(2)} USDT`);
+            const directionExposure=open.filter(o=>o.direction===tp.direction).reduce((sum,o)=>sum+orderNotional(o),0)+(tp.notional_value||0);
+            if(directionExposure>s.account_size*s.max_direction_exposure_pct/100)reasons.push(`${tp.direction_text}敞口$${directionExposure.toFixed(0)}超过上限`);
+            const today=new Date().toDateString();
+            const dailyPnl=orders.filter(o=>o.status==='closed'&&o.close_time&&new Date(o.close_time).toDateString()===today).reduce((sum,o)=>sum+(o.pnl||0),0);
+            if(dailyPnl<=-s.account_size*s.daily_loss_limit_pct/100)reasons.push(`今日亏损${dailyPnl.toFixed(2)}已触发熔断`);
+            const group=correlationGroup(data.symbol),sameGroup=open.filter(o=>o.direction===tp.direction&&correlationGroup(o.symbol)===group).length;
+            if(group!==data.symbol.split('-')[0]&&sameGroup>=2)reasons.push(`同方向高相关持仓已达${sameGroup}笔`);
+            return {allowed:reasons.length===0,reasons,total_risk:totalRisk,direction_exposure:directionExposure,daily_pnl:dailyPnl};
+        }
+        function renderPortfolioRisk(data){
+            const risk=evaluatePortfolioRisk(data),el=document.getElementById('portfolioRisk');
+            el.style.display='block';
+            el.style.background=risk.allowed?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)';
+            el.style.color=risk.allowed?'#2ecc71':'#e74c3c';
+            el.textContent=risk.allowed?`✓ 组合风控通过 · 总风险$${risk.total_risk.toFixed(2)} · 同向敞口$${risk.direction_exposure.toFixed(0)}`:`⛔ 组合风控：${risk.reasons.join('；')}`;
+            return risk;
+        }
         
         function filterSymbols(){
             const q = document.getElementById('symbolSearch').value.toLowerCase();
@@ -341,6 +416,7 @@
             document.getElementById('result').style.display='none';
             hideDropdown();
             if(wsConnected)subscribeSymbol(id);
+            predict();
         }
         function getHistory(){try{return JSON.parse(localStorage.getItem('cp_history')||'[]')}catch(e){return[]}}
         function saveHistory(r){const h=getHistory();h.push({...r,t:Date.now()});if(h.length>50)h.shift();localStorage.setItem('cp_history',JSON.stringify(h))}
@@ -351,7 +427,7 @@
             const btn=document.getElementById('predictBtn'),ld=document.getElementById('loading'),rs=document.getElementById('result'),er=document.getElementById('error');
             btn.disabled=true;ld.style.display='block';rs.style.display='none';er.style.display='none';document.getElementById('lossAlert').style.display='none';
             try{
-                const resp=await fetch(`/api/predict?symbol=${sym}&timeframe=${tf}`);
+                const resp=await fetch(`/api/predict?symbol=${sym}&timeframe=${tf}&${riskQuery()}`);
                 const d=await resp.json();
                 if(requestId!==predictionRequestId||sym!==selectedSymbol)return;
                 if(d.error){er.textContent='❌ '+d.error;er.style.display='block';return}
@@ -368,6 +444,7 @@
                 document.getElementById('momVal').className='value '+(d.prediction.momentum>=0?'green':'red');
                 document.getElementById('momValBadge').textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
                 const fr=d.funding_rate,fe=document.getElementById('fundVal');fe.textContent=fr.rate_text;fe.className='value '+(fr.rate>0?'green':fr.rate<0?'red':'');
+                const mp=d.mark_price&&d.mark_price.price,mpEl=document.getElementById('markPriceVal');mpEl.textContent=mp?'$'+mp.toLocaleString():'--';mpEl.title=mp?'OKX标记价格，用于风险监控':'标记价格暂不可用';
                 const sc=d.score,scEl=document.getElementById('scoreCircle');scEl.style.setProperty('--score',sc);
                 let col='#f39c12';if(sc>=70)col='#2ecc71';else if(sc>=55)col='#58d68d';else if(sc>=45)col='#f39c12';else if(sc>=30)col='#e67e22';else col='#e74c3c';
                 if(d.risk_gate&&!d.risk_gate.allowed)col='#f39c12';
@@ -468,14 +545,15 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 document.getElementById('advancedSignals').innerHTML=adv.length?adv.join(''):`<div style="text-align:center;color:#525f7a;padding:10px">无特殊信号</div>`;
                 document.getElementById('adviceText').textContent=d.advice;
                 
-                // 显示已下单和平仓按钮
+                // 显示模拟交易记录和平仓按钮
                 const orderBtn=document.getElementById('placeOrderBtn');
                 const closeBtn=document.getElementById('closeOrderBtn');
                 const orders=getOrders();
                 const hasOpenOrder=orders.some(o=>o.status==='open'&&o.symbol===d.symbol);
-                if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder){
+                const portfolioAssessment=renderPortfolioRisk(d);
+                if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder&&portfolioAssessment.allowed){
                     orderBtn.style.display='inline-block';
-                    orderBtn.textContent='✓ 已下单';
+                    orderBtn.textContent='记录模拟交易';
                 }else{
                     orderBtn.style.display='none';
                 }
@@ -730,6 +808,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         
         function placeOrder(){
             if(!currentData||currentData.trade_plan.direction==='neutral'){alert('当前无明确交易信号');return}
+            const portfolioAssessment=evaluatePortfolioRisk(currentData);
+            if(!portfolioAssessment.allowed){alert('组合风控禁止记录新交易：\n'+portfolioAssessment.reasons.join('\n'));return}
             const d=currentData;
             const tp=d.trade_plan;
             const order={
@@ -754,6 +834,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 margin_pct:tp.margin_pct,
                 margin_amount:tp.margin_amount,
                 notional_value:tp.notional_value,
+                account_settings:{...getRiskSettings()},
                 risk_reward:tp.risk_reward,
                 risk_amount:tp.risk_amount,
                 leverage:d.leverage.recommended_leverage,
@@ -802,7 +883,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             alertedLevels[order.id]={};
             document.getElementById('placeOrderBtn').textContent='✓ 已记录';
             document.getElementById('placeOrderBtn').style.background='#525f7a';
-            setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='✓ 已下单';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
+            setTimeout(()=>{document.getElementById('placeOrderBtn').textContent='记录模拟交易';document.getElementById('placeOrderBtn').style.background='#2ecc71'},2000);
             // 自动打开历史面板并切换到下单记录
             document.getElementById('historyPanel').style.display='block';
             switchHistoryTab('orders');
@@ -823,6 +904,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         
         // 实时价格缓存
         let livePrices={};
+        let markPrices={};
         let ws=null;
         let wsConnected=false;
         let subscribedSymbol=null;
@@ -915,8 +997,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                     const data=await resp.json();
                     if(!data.error){
                         livePrices[order.symbol]=data.current_price;
+                        if(data.mark_price)markPrices[order.symbol]=data.mark_price;
                         // 检查订单提醒
-                        checkOrderAlerts(order, data.current_price);
+                        checkOrderAlerts(order, data.mark_price||data.current_price);
                     }
                 }catch(e){}
             }
@@ -1046,7 +1129,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const orders=getOrders();
             const el=document.getElementById('orderList');
             if(orders.length===0){
-                el.innerHTML='<div style="text-align:center;color:#525f7a;padding:30px 20px"><div style="font-size:30px;margin-bottom:10px">📋</div><div style="font-size:13px;margin-bottom:4px">暂无下单记录</div><div style="font-size:11px">点交易计划卡的"✓ 已下单"按钮记录交易</div></div>';
+                el.innerHTML='<div style="text-align:center;color:#525f7a;padding:30px 20px"><div style="font-size:30px;margin-bottom:10px">📋</div><div style="font-size:13px;margin-bottom:4px">暂无模拟交易记录</div><div style="font-size:11px">点击交易计划卡的“记录模拟交易”按钮开始跟踪</div></div>';
                 return;
             }
             const openOrders=orders.filter(o=>o.status==='open');
@@ -1056,7 +1139,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             // 计算浮动盈亏
             let floatingPnl=0;
             openOrders.forEach(o=>{
-                const price=livePrices[o.symbol]||o.entry;
+                const price=markPrices[o.symbol]||livePrices[o.symbol]||o.entry;
                 const pnlPct=o.direction==='long'?(price-o.entry)/o.entry*100:(o.entry-price)/o.entry*100;
                 floatingPnl+=pnlPct/100*orderNotional(o);
             });
@@ -1079,7 +1162,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                 // 计算浮动盈亏
                 let floatPnl=0,floatPnlPct=0,currentPrice=o.entry;
                 if(o.status==='open'){
-                    currentPrice=livePrices[o.symbol]||o.entry;
+                    currentPrice=markPrices[o.symbol]||livePrices[o.symbol]||o.entry;
                     floatPnlPct=o.direction==='long'?(currentPrice-o.entry)/o.entry*100:(o.entry-currentPrice)/o.entry*100;
                     floatPnl=floatPnlPct/100*orderNotional(o);
                 }
@@ -1100,7 +1183,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                     </div>
                     ${o.status==='open'?`<div style="margin-top:6px;padding:6px 8px;background:${floatPnl>=0?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)'};border-radius:5px">
                         <div style="display:flex;justify-content:space-between;font-size:11px">
-                            <span>现价: <strong>$${currentPrice.toLocaleString()}</strong></span>
+                            <span>风险价(标记优先): <strong>$${currentPrice.toLocaleString()}</strong></span>
                             <span style="color:${floatPnl>=0?'#2ecc71':'#e74c3c'};font-weight:700">浮动: ${floatPnl>=0?'+':''}${floatPnl.toFixed(2)} USDT (${floatPnlPct>=0?'+':''}${floatPnlPct.toFixed(2)}%)</span>
                         </div>
                     </div>`:''}
@@ -1310,7 +1393,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             panel.style.display='block';
             result.innerHTML='<div style="text-align:center;padding:20px;color:#525f7a">回测中，请稍候...</div>';
             try{
-                const resp=await fetch(`/api/backtest?symbol=${selectedSymbol}&timeframe=${document.getElementById('timeframe').value}&days=${days}&capital=${capital}`);
+                const resp=await fetch(`/api/backtest?symbol=${selectedSymbol}&timeframe=${document.getElementById('timeframe').value}&days=${days}&capital=${capital}&${riskQuery()}`);
                 const data=await resp.json();
                 if(data.error){result.innerHTML=`<div style="color:#e74c3c;text-align:center;padding:20px">回测失败: ${data.error}</div>`;return}
                 const pnlColor=data.total_pnl>=0?'green':'red';
@@ -1418,7 +1501,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const timeframe=document.getElementById('timeframe').value;
             
             try{
-                const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}`);
+                const resp=await fetch(`/api/predict?symbol=${symbol}&timeframe=${timeframe}&${riskQuery()}`);
                 const data=await resp.json();
                 if(!data.error&&symbol===selectedSymbol&&timeframe===document.getElementById('timeframe').value){
                     if(fearGreedData)data.fear_greed=fearGreedData;
@@ -1473,6 +1556,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             if(levEl)levEl.textContent=d.leverage.recommended_leverage+'x';
             const fundEl=document.getElementById('fundVal');
             if(fundEl)fundEl.textContent=d.funding_rate.rate+'%';
+            const markEl=document.getElementById('markPriceVal');
+            if(markEl)markEl.textContent=d.mark_price&&d.mark_price.price?'$'+d.mark_price.price.toLocaleString():'--';
             if(d.fear_greed){
                 const fgEl=document.getElementById('fearGreedVal');
                 if(fgEl)fgEl.textContent=d.fear_greed.value+' ('+d.fear_greed.classification+')';
@@ -1535,7 +1620,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
             const closeBtn=document.getElementById('closeOrderBtn');
             const orders=getOrders();
             const hasOpenOrder=orders.some(o=>o.status==='open'&&o.symbol===d.symbol);
-            if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder){
+            const portfolioAssessment=renderPortfolioRisk(d);
+            if(d.trade_plan.direction!=='neutral'&&!hasOpenOrder&&portfolioAssessment.allowed){
                 orderBtn.style.display='inline-block';
             }else{
                 orderBtn.style.display='none';
@@ -1669,7 +1755,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
                     </div>
                 </div>
                 <div style="margin-top:8px;font-size:10px;color:#525f7a;text-align:center">
-                    点"已下单"开始实时监控
+                    记录模拟交易后开始实时监控
                 </div>
             `;
         }
@@ -1687,6 +1773,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
         }
         
         window.addEventListener('load',()=>{
+            loadRiskSettings();
             document.getElementById('symbolSearch').value = allSymbols[0].name;
             predict();
             renderAlerts();

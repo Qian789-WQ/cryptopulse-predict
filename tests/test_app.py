@@ -77,10 +77,20 @@ class CalculationTests(unittest.TestCase):
             cryptopulse.estimate_win_rate(80, 25, False, False, 0),
         )
 
+    def test_confirmation_uses_rendered_multi_timeframe_snapshot(self):
+        snapshot = {"timeframes": {"4H": {"score": 72}, "1H": {"score": 61}}}
+        confirmation = cryptopulse.confirmation_from_multi_tf(snapshot)
+        self.assertTrue(confirmation["confirmed"])
+        self.assertEqual(confirmation["score_4h"], 72)
+
 
 class RouteTests(unittest.TestCase):
     def setUp(self):
         cryptopulse.app.config.update(TESTING=True, SECRET_KEY="test")
+        cryptopulse._cache["live_symbols"] = (
+            [dict(item, category="", tick_size="", max_leverage="") for item in cryptopulse.SYMBOLS],
+            __import__("time").time(),
+        )
         self.client = cryptopulse.app.test_client()
 
     def login(self):
@@ -112,9 +122,10 @@ class RouteTests(unittest.TestCase):
         self.assertIn("下一根开盘成交", payload["strategy_note"])
         self.assertGreater(payload["fee_rate_pct"], 0)
 
+    @patch.object(cryptopulse, "get_mark_price")
     @patch.object(cryptopulse, "get_funding_rate")
     @patch.object(cryptopulse, "fetch_klines")
-    def test_predict_contract_contains_frontend_fields(self, fetch_klines, funding_rate):
+    def test_predict_contract_contains_frontend_fields(self, fetch_klines, funding_rate, mark_price):
         self.login()
         fetch_klines.return_value = (sample_market_data(), None)
         funding_rate.return_value = {
@@ -124,6 +135,7 @@ class RouteTests(unittest.TestCase):
             "next_time_text": "--",
             "warning": False,
         }
+        mark_price.return_value = {"price": 129.5, "timestamp": 123456789}
         response = self.client.get(
             "/api/predict?symbol=BTC-USDT-SWAP&timeframe=1H"
         )
@@ -131,12 +143,35 @@ class RouteTests(unittest.TestCase):
         plan = response.get_json()["trade_plan"]
         self.assertIn("pyramid", plan)
         self.assertEqual(plan["time_stop"]["max_holding_minutes"], 300)
+        self.assertEqual(response.get_json()["mark_price"]["price"], 129.5)
+        self.assertEqual(fetch_klines.call_count, 5)
+
+    def test_risk_settings_are_bounded(self):
+        self.login()
+        with cryptopulse.app.test_request_context(
+            "/api/predict?risk_pct=99&max_leverage=50&max_margin_pct=99"
+        ):
+            settings = cryptopulse.get_risk_settings()
+        self.assertEqual(settings["risk_pct"], 3)
+        self.assertEqual(settings["max_leverage"], 10)
+        self.assertEqual(settings["max_margin_pct"], 50)
+
+    def test_symbols_route_returns_current_cached_catalog(self):
+        self.login()
+        response = self.client.get("/api/symbols")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["count"], len(cryptopulse.SYMBOLS))
+        self.assertEqual(payload["data"][0]["id"], cryptopulse.SYMBOLS[0]["id"])
 
     def test_frontend_guards_websocket_symbol_switch(self):
         html = Path("templates/index.html").read_text(encoding="utf-8")
         self.assertIn("instId===selectedSymbol", html)
         self.assertIn("subscribedSymbol", html)
         self.assertIn("requestId!==predictionRequestId", html)
+        self.assertIn("normalizeRiskSettings", html)
+        self.assertIn("markPrices[o.symbol]||livePrices[o.symbol]", html)
+        self.assertIn("if(wsConnected)subscribeSymbol(id);\n            predict();", html)
 
 
 if __name__ == "__main__":

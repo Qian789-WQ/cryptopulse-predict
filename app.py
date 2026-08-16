@@ -17,10 +17,10 @@ import os
 _cache = {}
 _CACHE_TTL = 30  # 缓存30秒
 
-def get_cache(key):
+def get_cache(key, ttl=_CACHE_TTL):
     if key in _cache:
         data, ts = _cache[key]
-        if time.time() - ts < _CACHE_TTL:
+        if time.time() - ts < ttl:
             return data
         else:
             del _cache[key]
@@ -307,17 +307,89 @@ TIMEFRAMES = [
 
 SYMBOL_IDS = {item["id"] for item in SYMBOLS}
 TIMEFRAME_IDS = {item["id"] for item in TIMEFRAMES}
+STATIC_SYMBOL_NAMES = {item["id"]: item["name"] for item in SYMBOLS}
+
+
+def get_live_symbols():
+    """Return currently tradeable USDT linear swaps, falling back to the static catalog."""
+    cached = get_cache("live_symbols", ttl=3600)
+    if cached is not None:
+        return cached
+    fallback_cached = get_cache("live_symbols_fallback", ttl=300)
+    if fallback_cached is not None:
+        return fallback_cached
+    try:
+        resp = fetch_with_retry(
+            "https://www.okx.com/api/v5/public/instruments",
+            params={"instType": "SWAP"}, retries=2, timeout=10
+        )
+        payload = resp.json() if resp is not None else {}
+        if payload.get("code") != "0":
+            raise ValueError(payload.get("msg", "获取合约列表失败"))
+        items = []
+        for instrument in payload.get("data", []):
+            inst_id = instrument.get("instId", "")
+            if (instrument.get("state") != "live" or not inst_id.endswith("-USDT-SWAP")
+                    or instrument.get("ctType") not in ("", "linear")):
+                continue
+            base = inst_id.removesuffix("-USDT-SWAP")
+            items.append({
+                "id": inst_id,
+                "name": STATIC_SYMBOL_NAMES.get(inst_id, base),
+                "category": instrument.get("instCategory", ""),
+                "tick_size": instrument.get("tickSz", ""),
+                "max_leverage": instrument.get("lever", ""),
+            })
+        if not items:
+            raise ValueError("OKX未返回可交易USDT永续合约")
+        preferred_order = {item["id"]: index for index, item in enumerate(SYMBOLS)}
+        items.sort(key=lambda item: (preferred_order.get(item["id"], 9999), item["id"]))
+        set_cache("live_symbols", items)
+        return items
+    except Exception:
+        fallback = [dict(item, category="", tick_size="", max_leverage="") for item in SYMBOLS]
+        set_cache("live_symbols_fallback", fallback)
+        return fallback
+
+
+def get_symbol_ids():
+    return {item["id"] for item in get_live_symbols()}
 
 
 def get_market_params():
     """Validate user supplied market parameters before calling OKX."""
     symbol = request.args.get("symbol", "BTC-USDT-SWAP")
     timeframe = request.args.get("timeframe", "1H")
-    if symbol not in SYMBOL_IDS:
+    if symbol not in get_symbol_ids():
         return None, None, (jsonify({"error": "不支持的交易品种"}), 400)
     if timeframe not in TIMEFRAME_IDS:
         return None, None, (jsonify({"error": "不支持的时间周期"}), 400)
     return symbol, timeframe, None
+
+
+def get_risk_settings():
+    """Read bounded, user-configurable risk inputs from the request."""
+    def number(name, default, minimum, maximum):
+        try:
+            value = float(request.args.get(name, default))
+            if not np.isfinite(value):
+                raise ValueError
+            return max(minimum, min(value, maximum))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "account_size": number("account_size", 1000, 10, 100_000_000),
+        "risk_pct": number("risk_pct", 1, 0.1, 3),
+        "max_margin_pct": number("max_margin_pct", 25, 1, 50),
+        "max_leverage": int(number("max_leverage", 5, 1, 10)),
+        "fee_pct": number("fee_pct", 0.05, 0, 1),
+        "slippage_pct": number("slippage_pct", 0.02, 0, 1),
+        "max_total_risk_pct": number("max_total_risk_pct", 3, 0.5, 10),
+        "max_direction_exposure_pct": number("max_direction_exposure_pct", 100, 10, 500),
+        "daily_loss_limit_pct": number("daily_loss_limit_pct", 3, 0.5, 20),
+        "max_open_positions": int(number("max_open_positions", 3, 1, 20)),
+    }
 
 def fetch_klines(symbol, timeframe, limit=500):
     """从OKX获取K线数据"""
@@ -667,7 +739,8 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
     
 
 
-def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_size=1000):
+def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_size=1000,
+                    risk_pct=1, max_margin_pct=25, max_leverage=5):
     """Build a risk-budgeted plan with unambiguous margin and notional values."""
     # 基于评分决定方向
     if score >= 55:
@@ -713,12 +786,12 @@ def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_s
     reward = abs(tp1 - entry)
     risk_reward = round(reward / risk, 2) if risk > 0 else 0
     
-    # Risk budget is 1% of equity. Margin use is capped at 25%; leverage at 5x.
-    leverage = max(1, min(int(leverage), 5))
-    risk_budget = account_size * 0.01
+    # Size the position from the selected equity risk budget and exposure caps.
+    leverage = max(1, min(int(leverage), int(max_leverage)))
+    risk_budget = account_size * risk_pct / 100
     stop_pct = risk / entry if entry > 0 else 0
     target_notional = risk_budget / stop_pct if stop_pct > 0 else 0
-    max_margin_amount = account_size * 0.25
+    max_margin_amount = account_size * max_margin_pct / 100
     notional_value = min(target_notional, max_margin_amount * leverage)
     margin_amount = notional_value / leverage if leverage else 0
     margin_pct = margin_amount / account_size * 100 if account_size else 0
@@ -944,6 +1017,23 @@ def analyze_multi_timeframe(symbol, current_timeframe):
         }
 
 
+def confirmation_from_multi_tf(multi_tf):
+    """Derive confirmation from the exact same snapshot shown in the UI."""
+    frames = multi_tf.get("timeframes", {})
+    frame_4h, frame_1h = frames.get("4H", {}), frames.get("1H", {})
+    if frame_4h.get("error") or frame_1h.get("error") or not frame_4h or not frame_1h:
+        return {"confirmed": False, "reason": "多周期数据不足，禁止生成交易计划"}
+    score_4h, score_1h = frame_4h.get("score", 50), frame_1h.get("score", 50)
+    dir_4h = "bullish" if score_4h >= 55 else "bearish" if score_4h <= 45 else "neutral"
+    dir_1h = "bullish" if score_1h >= 55 else "bearish" if score_1h <= 45 else "neutral"
+    if dir_4h == dir_1h and dir_4h != "neutral":
+        return {"confirmed": True, "reason": f"4H({score_4h}分)和1H({score_1h}分)同向{dir_4h}",
+                "score_4h": score_4h, "score_1h": score_1h}
+    return {"confirmed": False,
+            "reason": f"4H({score_4h}分,{dir_4h})和1H({score_1h}分,{dir_1h})方向不一致，建议观望",
+            "score_4h": score_4h, "score_1h": score_1h}
+
+
 def get_funding_rate(symbol):
     """获取当前资金费率（带缓存）"""
     cache_key = f"funding_{symbol}"
@@ -974,6 +1064,28 @@ def get_funding_rate(symbol):
     except Exception as e:
         pass
     return {"rate": 0, "rate_text": "--", "next_time": 0, "next_time_text": "--", "warning": False}
+
+
+def get_mark_price(symbol):
+    """Get the risk-management mark price used by OKX derivatives."""
+    cache_key = f"mark_price_{symbol}"
+    cached = get_cache(cache_key, ttl=5)
+    if cached is not None:
+        return cached
+    try:
+        resp = fetch_with_retry(
+            "https://www.okx.com/api/v5/public/mark-price",
+            params={"instType": "SWAP", "instId": symbol}, retries=2, timeout=8
+        )
+        payload = resp.json() if resp is not None else {}
+        if payload.get("code") == "0" and payload.get("data"):
+            item = payload["data"][0]
+            result = {"price": float(item["markPx"]), "timestamp": int(item.get("ts", 0))}
+            set_cache(cache_key, result)
+            return result
+    except Exception:
+        pass
+    return {"price": None, "timestamp": 0}
 
 
 
@@ -1163,7 +1275,7 @@ def check_time_filter():
         return {"is_bad_time": True, "reason": "UTC 21:00-06:00低活跃时段，建议降低仓位", "level": "medium"}
     return {"is_bad_time": False, "reason": "交易时段正常", "level": "low"}
 
-def calc_dynamic_leverage(atr, current_price, adx):
+def calc_dynamic_leverage(atr, current_price, adx, max_leverage=5):
     """Conservative leverage suggestion; volatility can expand without warning."""
     atr_pct = atr / current_price * 100
     if atr_pct > 4:
@@ -1178,8 +1290,9 @@ def calc_dynamic_leverage(atr, current_price, adx):
         base_leverage = min(base_leverage + 1, 5)
     elif adx < 20:
         base_leverage = max(base_leverage - 1, 1)
+    base_leverage = min(base_leverage, max(1, int(max_leverage)))
     return {"recommended_leverage": round(base_leverage), "atr_pct": round(atr_pct, 2),
-            "adx": round(float(adx), 1), "max_leverage": 5,
+            "adx": round(float(adx), 1), "max_leverage": int(max_leverage),
             "note": f"ATR{atr_pct:.1f}% + ADX{adx:.0f}，保守上限{round(base_leverage)}倍"}
 
 def calc_trailing_stop(plan, current_price):
@@ -1265,7 +1378,14 @@ def api_logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html", symbols=SYMBOLS, timeframes=TIMEFRAMES)
+    return render_template("index.html", symbols=get_live_symbols(), timeframes=TIMEFRAMES)
+
+
+@app.route("/api/symbols")
+@login_required
+def api_symbols():
+    symbols = get_live_symbols()
+    return jsonify({"count": len(symbols), "data": symbols, "timestamp": int(time.time())})
 
 @app.route("/api/price")
 @login_required
@@ -1279,9 +1399,12 @@ def api_price():
         if error or df is None or len(df) == 0:
             return jsonify({"error": "获取价格失败"})
         current_price = float(df.iloc[-1]["close"])
+        mark_price = get_mark_price(symbol)
         return jsonify({
             "symbol": symbol,
             "current_price": current_price,
+            "mark_price": mark_price["price"],
+            "mark_timestamp": mark_price["timestamp"],
             "timestamp": int(time.time())
         })
     except Exception as e:
@@ -1294,6 +1417,7 @@ def api_predict():
         symbol, timeframe, validation_error = get_market_params()
         if validation_error:
             return validation_error
+        risk_settings = get_risk_settings()
         
         raw_df, error = fetch_klines(symbol, timeframe, 300)
         if error:
@@ -1341,11 +1465,16 @@ def api_predict():
         streak = get_consecutive_streak(df)
         time_filter = check_time_filter()
         adx_val = float(latest["adx"])
-        leverage = calc_dynamic_leverage(float(latest["atr"]), market_price, adx_val)
+        leverage = calc_dynamic_leverage(float(latest["atr"]), market_price, adx_val,
+                                         max_leverage=risk_settings["max_leverage"])
         multi_tf_data = analyze_multi_timeframe(symbol, timeframe)
-        multi_tf_confirmation = check_multi_tf_confirmation(symbol, timeframe)
+        multi_tf_confirmation = confirmation_from_multi_tf(multi_tf_data)
         tp = calc_trade_plan(score, market_price, float(latest["atr"]), sr, symbol,
-                             leverage=leverage["recommended_leverage"])
+                             leverage=leverage["recommended_leverage"],
+                             account_size=risk_settings["account_size"],
+                             risk_pct=risk_settings["risk_pct"],
+                             max_margin_pct=risk_settings["max_margin_pct"],
+                             max_leverage=risk_settings["max_leverage"])
         if tp["direction"] != "neutral":
             tp["time_stop"]["max_holding_minutes"] = {
                 "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
@@ -1354,7 +1483,8 @@ def api_predict():
             }.get(timeframe, 300)
         tp, risk_gate = apply_trade_risk_gate(
             tp, pred, multi_tf_confirmation, adx_val, fake_breakout,
-            time_filter, sr
+            time_filter, sr,
+            roundtrip_cost_pct=(risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2
         )
         if not risk_gate["allowed"] and score not in range(46, 55):
             signal, signal_class = "风控观望", "neutral"
@@ -1464,6 +1594,8 @@ def api_predict():
             "symbol": symbol,
             "timeframe": timeframe,
             "current_price": market_price,
+            "mark_price": get_mark_price(symbol),
+            "risk_settings": risk_settings,
             "signal_candle_closed": True,
             "signal_candle_timestamp": int(latest["timestamp"]),
             "confidence": confidence_data,
@@ -1516,7 +1648,7 @@ def api_scan():
         _, timeframe, validation_error = get_market_params()
         if validation_error and timeframe is None:
             return validation_error
-        symbols = SYMBOLS[:limit]
+        symbols = get_live_symbols()[:limit]
         
         results = []
         for s in symbols:
@@ -1592,6 +1724,8 @@ def api_backtest():
             return validation_error
         days = max(1, min(int(request.args.get("days", 30)), 90))
         initial_balance = float(request.args.get("capital", 1000))
+        risk_settings = get_risk_settings()
+        risk_settings["account_size"] = initial_balance
         if not np.isfinite(initial_balance) or initial_balance <= 0:
             return jsonify({"error": "初始资金必须大于0"}), 400
         
@@ -1614,8 +1748,8 @@ def api_backtest():
         max_balance = initial_balance
         max_drawdown = 0
         
-        fee_rate = 0.0005
-        slippage_rate = 0.0002
+        fee_rate = risk_settings["fee_pct"] / 100
+        slippage_rate = risk_settings["slippage_pct"] / 100
 
         def realize_leg(pos, exit_price, fraction):
             signed_return = ((exit_price - pos["entry"]) / pos["entry"])
@@ -1650,13 +1784,18 @@ def api_backtest():
                 next_row = df.iloc[i + 1]
                 raw_entry = float(next_row["open"])
                 entry = raw_entry * (1 + slippage_rate if direction == "long" else 1 - slippage_rate)
-                leverage_data = calc_dynamic_leverage(float(row["atr"]), entry, float(row["adx"]))
+                leverage_data = calc_dynamic_leverage(float(row["atr"]), entry, float(row["adx"]),
+                                                       max_leverage=risk_settings["max_leverage"])
                 plan = calc_trade_plan(score, entry, float(row["atr"]), calc_support_resistance(df.iloc[:i + 1]),
-                                       symbol, leverage=leverage_data["recommended_leverage"], account_size=balance)
+                                       symbol, leverage=leverage_data["recommended_leverage"], account_size=balance,
+                                       risk_pct=risk_settings["risk_pct"],
+                                       max_margin_pct=risk_settings["max_margin_pct"],
+                                       max_leverage=risk_settings["max_leverage"])
                 prediction = predict_price(df.iloc[:i + 1], periods=5)
                 expected = max([0] + ([p - entry for p in prediction["predicted"]] if direction == "long"
                                       else [entry - p for p in prediction["predicted"]]))
-                if expected / entry * 100 < max(0.19, plan["stop_pct"] * 1.5):
+                minimum_cost_move = (risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2 + 0.05
+                if expected / entry * 100 < max(minimum_cost_move, plan["stop_pct"] * 1.5):
                     continue
                 position = {
                     "side": direction, "entry": entry, "stop_loss": plan["stop_loss"],
