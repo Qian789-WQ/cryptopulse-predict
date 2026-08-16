@@ -307,6 +307,13 @@ TIMEFRAMES = [
 
 SYMBOL_IDS = {item["id"] for item in SYMBOLS}
 TIMEFRAME_IDS = {item["id"] for item in TIMEFRAMES}
+TIMEFRAME_MS = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+    "30m": 1_800_000, "1H": 3_600_000, "2H": 7_200_000,
+    "4H": 14_400_000, "6H": 21_600_000, "8H": 28_800_000,
+    "12H": 43_200_000, "1D": 86_400_000, "3D": 259_200_000,
+    "1W": 604_800_000, "1M": 2_592_000_000,
+}
 STATIC_SYMBOL_NAMES = {item["id"]: item["name"] for item in SYMBOLS}
 
 
@@ -406,6 +413,66 @@ def fetch_klines(symbol, timeframe, limit=500):
         return candles_to_dataframe(data["data"]), None
     except Exception as e:
         return None, str(e)
+
+
+def get_market_quality(symbol):
+    """Measure executable market quality from the current best bid/ask and 24h volume."""
+    cache_key = f"market_quality_{symbol}"
+    cached = get_cache(cache_key, ttl=10)
+    if cached is not None:
+        return cached
+    unavailable = {"available": False, "tradeable": False, "reason": "盘口质量数据不可用"}
+    try:
+        resp = fetch_with_retry(
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": symbol}, retries=2, timeout=8
+        )
+        payload = resp.json() if resp is not None else {}
+        if payload.get("code") != "0" or not payload.get("data"):
+            return unavailable
+        item = payload["data"][0]
+        bid, ask, last = float(item["bidPx"]), float(item["askPx"]), float(item["last"])
+        if bid <= 0 or ask <= 0 or ask < bid or last <= 0:
+            return unavailable
+        midpoint = (bid + ask) / 2
+        spread_pct = (ask - bid) / midpoint * 100
+        base_volume = float(item.get("volCcy24h") or 0)
+        quote_volume = base_volume * last
+        timestamp = int(item.get("ts") or 0)
+        stale = timestamp <= 0 or int(time.time() * 1000) - timestamp > 60_000
+        reasons = []
+        if stale:
+            reasons.append("盘口快照已过期")
+        if spread_pct > 0.15:
+            reasons.append(f"买卖点差{spread_pct:.3f}%过高")
+        if quote_volume < 1_000_000:
+            reasons.append(f"24小时成交额约${quote_volume:,.0f}，流动性不足")
+        result = {
+            "available": True,
+            "tradeable": not reasons,
+            "reason": "；".join(reasons) if reasons else "点差和成交额满足执行要求",
+            "bid": bid, "ask": ask, "last": last,
+            "spread_pct": round(spread_pct, 4),
+            "quote_volume_24h": round(quote_volume, 2),
+            "timestamp": timestamp,
+        }
+        set_cache(cache_key, result)
+        return result
+    except Exception:
+        return unavailable
+
+
+def get_data_freshness(candle_timestamp, timeframe, now_ms=None):
+    """Reject signals built from candles older than three expected bar durations."""
+    now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    duration = TIMEFRAME_MS.get(timeframe, 3_600_000)
+    age_ms = max(0, now_ms - int(candle_timestamp))
+    max_age_ms = duration * 3
+    return {
+        "stale": age_ms > max_age_ms,
+        "age_minutes": round(age_ms / 60_000, 1),
+        "max_age_minutes": round(max_age_ms / 60_000, 1),
+    }
 
 
 def candles_to_dataframe(candles):
@@ -538,10 +605,14 @@ def calc_indicators(df):
     return df
 
 def predict_price(df, periods=5):
-    """优化预测：加权线性回归 + 动量调整 + 均值回归"""
+    """Return a baseline path plus a volatility-aware uncertainty band."""
     df = df.dropna(subset=["close"])
     if len(df) < 30:
-        return {"predicted": [float(df["close"].iloc[-1])] * periods, "trend": "数据不足", "slope": 0, "momentum": 0, "volatility": 0, "mean_reversion": 0}
+        price = float(df["close"].iloc[-1])
+        return {"predicted": [price] * periods, "lower": [price] * periods,
+                "upper": [price] * periods, "trend": "数据不足", "slope": 0,
+                "momentum": 0, "volatility": 0, "mean_reversion": 0,
+                "model_note": "数据不足，仅显示当前价格"}
     
     recent = df.tail(30)
     x = np.arange(len(recent))
@@ -575,17 +646,28 @@ def predict_price(df, periods=5):
     momentum_adj = np.linspace(0, avg_momentum * current_price * 0.3, periods)
     reversion_adj = np.linspace(0, mean_reversion * current_price * 0.5, periods)
     predicted = base_pred + momentum_adj + reversion_adj
+
+    fitted = slope * x + intercept
+    residual_std = float(np.std(y - fitted))
+    one_bar_move = abs(volatility) / 100 * current_price
+    base_uncertainty = max(residual_std, one_bar_move)
+    bands = np.array([base_uncertainty * np.sqrt(step) for step in range(1, periods + 1)])
+    lower = predicted - bands
+    upper = predicted + bands
     
     trend_score = slope / current_price * 100 + avg_momentum * 50
     trend = "上涨" if trend_score > 0.3 else "下跌" if trend_score < -0.3 else "震荡"
     
     return {
         "predicted": [round(float(p), 2) for p in predicted],
+        "lower": [round(float(p), 2) for p in lower],
+        "upper": [round(float(p), 2) for p in upper],
         "slope": float(slope),
         "momentum": round(float(avg_momentum * 100), 2),
         "volatility": round(float(volatility), 2),
         "trend": trend,
-        "mean_reversion": round(float(mean_reversion * 100), 2)
+        "mean_reversion": round(float(mean_reversion * 100), 2),
+        "model_note": "线性基准路径与波动区间，不是目标价或概率保证",
     }
 
 def calc_signal_score(df):
@@ -740,7 +822,8 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
 
 
 def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_size=1000,
-                    risk_pct=1, max_margin_pct=25, max_leverage=5):
+                    risk_pct=1, max_margin_pct=25, max_leverage=5,
+                    roundtrip_cost_pct=0.14):
     """Build a risk-budgeted plan with unambiguous margin and notional values."""
     # 基于评分决定方向
     if score >= 55:
@@ -757,6 +840,8 @@ def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_s
             "tp1": None, "tp2": None, "tp3": None,
             "position_size": 0, "position_pct": 0, "margin_amount": 0,
             "margin_pct": 0, "notional_value": 0, "risk_reward": 0,
+            "price_risk_amount": 0, "estimated_roundtrip_cost": 0,
+            "risk_amount": 0, "risk_budget": round(account_size * risk_pct / 100, 2),
             "signal_strength": "none", "strength_text": "无交易信号",
             "pyramid": {"enabled": False}, "time_stop": {"enabled": False},
             "message": "信号不明确，建议观望"
@@ -784,18 +869,24 @@ def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_s
     # 盈亏比（用TP1算）
     risk = abs(entry - stop_loss)
     reward = abs(tp1 - entry)
-    risk_reward = round(reward / risk, 2) if risk > 0 else 0
+    gross_risk_reward = round(reward / risk, 2) if risk > 0 else 0
     
     # Size the position from the selected equity risk budget and exposure caps.
     leverage = max(1, min(int(leverage), int(max_leverage)))
     risk_budget = account_size * risk_pct / 100
     stop_pct = risk / entry if entry > 0 else 0
-    target_notional = risk_budget / stop_pct if stop_pct > 0 else 0
+    cost_fraction = max(0, roundtrip_cost_pct) / 100
+    effective_loss_fraction = stop_pct + cost_fraction
+    net_reward_fraction = max(0, reward / entry - cost_fraction) if entry > 0 else 0
+    risk_reward = round(net_reward_fraction / effective_loss_fraction, 2) if effective_loss_fraction else 0
+    target_notional = risk_budget / effective_loss_fraction if effective_loss_fraction > 0 else 0
     max_margin_amount = account_size * max_margin_pct / 100
     notional_value = min(target_notional, max_margin_amount * leverage)
     margin_amount = notional_value / leverage if leverage else 0
     margin_pct = margin_amount / account_size * 100 if account_size else 0
-    actual_risk_amount = notional_value * stop_pct
+    price_risk_amount = notional_value * stop_pct
+    estimated_roundtrip_cost = notional_value * cost_fraction
+    actual_risk_amount = price_risk_amount + estimated_roundtrip_cost
     
     # 每个止盈位的平仓比例
     tp1_close_pct = 30  # TP1平30%
@@ -843,6 +934,9 @@ def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_s
         "notional_value": round(notional_value, 2),
         "leverage": leverage,
         "risk_reward": risk_reward,
+        "gross_risk_reward": gross_risk_reward,
+        "price_risk_amount": round(price_risk_amount, 2),
+        "estimated_roundtrip_cost": round(estimated_roundtrip_cost, 2),
         "risk_amount": round(actual_risk_amount, 2),
         "risk_budget": round(risk_budget, 2),
         "stop_pct": round(stop_pct * 100, 3),
@@ -856,7 +950,8 @@ def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_s
 
 
 def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout,
-                          time_filter, support_resistance, roundtrip_cost_pct=0.14):
+                          time_filter, support_resistance, roundtrip_cost_pct=0.14,
+                          market_quality=None, data_freshness=None, funding_rate=None):
     """Turn conflicting/uneconomic candidates into an explicit no-trade plan."""
     if plan["direction"] == "neutral":
         return plan, {"allowed": False, "reasons": [plan["message"]], "cost_pct": roundtrip_cost_pct}
@@ -885,6 +980,19 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
         reasons.append("检测到假突破")
     if time_filter.get("level") == "high":
         reasons.append(time_filter.get("reason", "当前时段流动性风险较高"))
+    if data_freshness and data_freshness.get("stale"):
+        reasons.append(f"已收盘K线距今{data_freshness['age_minutes']:.0f}分钟，行情数据过期")
+    if market_quality:
+        if not market_quality.get("available"):
+            reasons.append("盘口质量数据不可用")
+        elif not market_quality.get("tradeable"):
+            reasons.append(market_quality.get("reason", "当前盘口不适合执行"))
+    if funding_rate and funding_rate.get("warning"):
+        rate = float(funding_rate.get("rate") or 0)
+        if direction == "long" and rate > 0.05:
+            reasons.append(f"多头资金费率{rate:+.4f}%过热，追多成本和拥挤风险过高")
+        elif direction == "short" and rate < -0.05:
+            reasons.append(f"空头资金费率{rate:+.4f}%过热，追空成本和拥挤风险过高")
     if expected_move_pct < minimum_move_pct:
         reasons.append(f"预测空间{expected_move_pct:.2f}%不足以覆盖成本与风险阈值{minimum_move_pct:.2f}%")
 
@@ -902,6 +1010,8 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
         "minimum_move_pct": round(minimum_move_pct, 3),
         "cost_pct": roundtrip_cost_pct,
         "barrier_risk_reward": round(barrier_rr, 2) if barrier_rr is not None else None,
+        "market_quality_passed": market_quality.get("tradeable") if market_quality else None,
+        "data_freshness_passed": not data_freshness.get("stale") if data_freshness else None,
     }
     if reasons:
         blocked = dict(plan)
@@ -916,6 +1026,8 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
             "margin_amount": 0,
             "margin_pct": 0,
             "notional_value": 0,
+            "price_risk_amount": 0,
+            "estimated_roundtrip_cost": 0,
             "risk_amount": 0,
             "pyramid": {"enabled": False},
             "message": "风控拦截：" + "；".join(reasons),
@@ -1270,7 +1382,7 @@ def check_time_filter():
     is_weekend = weekday >= 5
     is_low_vol = (hour >= 21 or hour < 6)
     if is_weekend:
-        return {"is_bad_time": True, "reason": "周末流动性低，建议观望", "level": "high"}
+        return {"is_bad_time": True, "reason": "周末机构参与度可能下降，以实时点差和成交额为准", "level": "medium"}
     elif is_low_vol:
         return {"is_bad_time": True, "reason": "UTC 21:00-06:00低活跃时段，建议降低仓位", "level": "medium"}
     return {"is_bad_time": False, "reason": "交易时段正常", "level": "low"}
@@ -1425,6 +1537,10 @@ def api_predict():
         pred = predict_price(df, periods=5)
         score, reasons = calc_signal_score(df)
         sr = calc_support_resistance(df)
+        market_quality = get_market_quality(symbol)
+        data_freshness = get_data_freshness(latest["timestamp"], timeframe)
+        funding_rate = get_funding_rate(symbol)
+        roundtrip_cost_pct = (risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2
         
         if score >= 70:
             signal = "强烈看涨"
@@ -1460,7 +1576,8 @@ def api_predict():
                              account_size=risk_settings["account_size"],
                              risk_pct=risk_settings["risk_pct"],
                              max_margin_pct=risk_settings["max_margin_pct"],
-                             max_leverage=risk_settings["max_leverage"])
+                             max_leverage=risk_settings["max_leverage"],
+                             roundtrip_cost_pct=roundtrip_cost_pct)
         if tp["direction"] != "neutral":
             tp["time_stop"]["max_holding_minutes"] = {
                 "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
@@ -1470,7 +1587,10 @@ def api_predict():
         tp, risk_gate = apply_trade_risk_gate(
             tp, pred, multi_tf_confirmation, adx_val, fake_breakout,
             time_filter, sr,
-            roundtrip_cost_pct=(risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2
+            roundtrip_cost_pct=roundtrip_cost_pct,
+            market_quality=market_quality,
+            data_freshness=data_freshness,
+            funding_rate=funding_rate,
         )
         if not risk_gate["allowed"] and score not in range(46, 55):
             signal, signal_class = "风控观望", "neutral"
@@ -1579,6 +1699,8 @@ def api_predict():
             "current_price": market_price,
             "mark_price": get_mark_price(symbol),
             "risk_settings": risk_settings,
+            "market_quality": market_quality,
+            "data_freshness": data_freshness,
             "signal_candle_closed": True,
             "signal_candle_timestamp": int(latest["timestamp"]),
             "confidence": confidence_data,
@@ -1599,7 +1721,7 @@ def api_predict():
             "trade_plan": tp,
             "risk_gate": risk_gate,
             "multi_tf": multi_tf_data,
-            "funding_rate": get_funding_rate(symbol),
+            "funding_rate": funding_rate,
             "fib_levels": calc_fibonacci_and_levels(df),
             "volume_anomaly": detect_volume_anomaly(df),
             "divergence": divergence,
@@ -1772,7 +1894,8 @@ def api_backtest():
                                        symbol, leverage=leverage_data["recommended_leverage"], account_size=balance,
                                        risk_pct=risk_settings["risk_pct"],
                                        max_margin_pct=risk_settings["max_margin_pct"],
-                                       max_leverage=risk_settings["max_leverage"])
+                                       max_leverage=risk_settings["max_leverage"],
+                                       roundtrip_cost_pct=(risk_settings["fee_pct"] + risk_settings["slippage_pct"]) * 2)
                 prediction = predict_price(df.iloc[:i + 1], periods=5)
                 expected = max([0] + ([p - entry for p in prediction["predicted"]] if direction == "long"
                                       else [entry - p for p in prediction["predicted"]]))

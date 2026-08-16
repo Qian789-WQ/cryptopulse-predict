@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +39,11 @@ class CalculationTests(unittest.TestCase):
         self.assertLessEqual(plan["margin_pct"], 25)
         self.assertLessEqual(plan["leverage"], 5)
         self.assertLessEqual(plan["risk_amount"], plan["risk_budget"])
+        self.assertAlmostEqual(
+            plan["risk_amount"],
+            plan["price_risk_amount"] + plan["estimated_roundtrip_cost"],
+            places=2,
+        )
         self.assertGreater(plan["pyramid"]["entry2"]["price"], plan["entry"])
         self.assertGreater(plan["pyramid"]["entry3"]["price"], plan["pyramid"]["entry2"]["price"])
 
@@ -71,6 +76,18 @@ class CalculationTests(unittest.TestCase):
         self.assertTrue(gate["allowed"])
         self.assertEqual(allowed["direction"], "long")
 
+    def test_risk_gate_blocks_crowded_same_direction_funding(self):
+        plan = cryptopulse.calc_trade_plan(75, 100, 2, {}, "BTC-USDT-SWAP")
+        blocked, gate = cryptopulse.apply_trade_risk_gate(
+            plan,
+            {"predicted": [101, 103, 105, 106, 107]},
+            {"confirmed": True}, 30, {"is_fake": False}, {"level": "low"}, {},
+            funding_rate={"rate": 0.08, "warning": True},
+        )
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(blocked["direction"], "neutral")
+        self.assertTrue(any("资金费率" in reason for reason in gate["reasons"]))
+
     def test_short_signal_win_rate_uses_conviction(self):
         self.assertEqual(
             cryptopulse.estimate_win_rate(20, 25, False, False, 0),
@@ -82,6 +99,23 @@ class CalculationTests(unittest.TestCase):
         confirmation = cryptopulse.confirmation_from_multi_tf(snapshot)
         self.assertTrue(confirmation["confirmed"])
         self.assertEqual(confirmation["score_4h"], 72)
+
+    def test_prediction_exposes_expanding_uncertainty_band(self):
+        prediction = cryptopulse.predict_price(cryptopulse.calc_indicators(sample_market_data()))
+        self.assertEqual(len(prediction["lower"]), 5)
+        self.assertTrue(all(lo <= mid <= hi for lo, mid, hi in zip(
+            prediction["lower"], prediction["predicted"], prediction["upper"]
+        )))
+        self.assertGreaterEqual(
+            prediction["upper"][-1] - prediction["lower"][-1],
+            prediction["upper"][0] - prediction["lower"][0],
+        )
+
+    def test_data_freshness_uses_timeframe_duration(self):
+        result = cryptopulse.get_data_freshness(1_000_000, "1H", now_ms=8_200_000)
+        self.assertFalse(result["stale"])
+        stale = cryptopulse.get_data_freshness(1_000_000, "1H", now_ms=12_000_001)
+        self.assertTrue(stale["stale"])
 
 
 class RouteTests(unittest.TestCase):
@@ -122,10 +156,14 @@ class RouteTests(unittest.TestCase):
         self.assertIn("下一根开盘成交", payload["strategy_note"])
         self.assertGreater(payload["fee_rate_pct"], 0)
 
+    @patch.object(cryptopulse, "get_data_freshness")
+    @patch.object(cryptopulse, "get_market_quality")
     @patch.object(cryptopulse, "get_mark_price")
     @patch.object(cryptopulse, "get_funding_rate")
     @patch.object(cryptopulse, "fetch_klines")
-    def test_predict_contract_contains_frontend_fields(self, fetch_klines, funding_rate, mark_price):
+    def test_predict_contract_contains_frontend_fields(
+        self, fetch_klines, funding_rate, mark_price, market_quality, freshness
+    ):
         self.login()
         fetch_klines.return_value = (sample_market_data(), None)
         funding_rate.return_value = {
@@ -136,6 +174,11 @@ class RouteTests(unittest.TestCase):
             "warning": False,
         }
         mark_price.return_value = {"price": 129.5, "timestamp": 123456789}
+        market_quality.return_value = {
+            "available": True, "tradeable": True, "spread_pct": 0.01,
+            "quote_volume_24h": 10_000_000, "reason": "执行质量正常",
+        }
+        freshness.return_value = {"stale": False, "age_minutes": 60, "max_age_minutes": 180}
         response = self.client.get(
             "/api/predict?symbol=BTC-USDT-SWAP&timeframe=1H"
         )
@@ -144,7 +187,23 @@ class RouteTests(unittest.TestCase):
         self.assertIn("pyramid", plan)
         self.assertEqual(plan["time_stop"]["max_holding_minutes"], 300)
         self.assertEqual(response.get_json()["mark_price"]["price"], 129.5)
+        self.assertTrue(response.get_json()["market_quality"]["tradeable"])
+        self.assertIn("lower", response.get_json()["prediction"])
         self.assertEqual(fetch_klines.call_count, 5)
+
+    @patch.object(cryptopulse, "fetch_with_retry")
+    def test_market_quality_calculates_spread_and_quote_volume(self, fetch):
+        cryptopulse._cache.pop("market_quality_BTC-USDT-SWAP", None)
+        response = Mock()
+        response.json.return_value = {"code": "0", "data": [{
+            "bidPx": "99.9", "askPx": "100.1", "last": "100",
+            "volCcy24h": "20000", "ts": str(int(__import__("time").time() * 1000)),
+        }]}
+        fetch.return_value = response
+        quality = cryptopulse.get_market_quality("BTC-USDT-SWAP")
+        self.assertAlmostEqual(quality["spread_pct"], 0.2, places=3)
+        self.assertEqual(quality["quote_volume_24h"], 2_000_000)
+        self.assertFalse(quality["tradeable"])
 
     def test_risk_settings_are_bounded(self):
         self.login()
@@ -175,6 +234,8 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("calcLiquidation", html)
         self.assertNotIn("kellyPos", html)
         self.assertNotIn("economicEvents", html)
+        self.assertIn("orderRoundtripCost", html)
+        self.assertIn("marketQualityVal", html)
 
 
 if __name__ == "__main__":
