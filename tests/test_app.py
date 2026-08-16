@@ -100,6 +100,25 @@ class CalculationTests(unittest.TestCase):
         self.assertTrue(confirmation["confirmed"])
         self.assertEqual(confirmation["score_4h"], 72)
 
+    def test_4h_signal_treats_opposite_1h_as_cautious_entry(self):
+        snapshot = {
+            "current_timeframe": "4H",
+            "timeframes": {"4H": {"score": 25}, "1H": {"score": 75}},
+        }
+        confirmation = cryptopulse.confirmation_from_multi_tf(snapshot, "short")
+        self.assertFalse(confirmation["confirmed"])
+        self.assertTrue(confirmation["compatible"])
+
+        plan = cryptopulse.calc_trade_plan(25, 100, 2, {}, "BTC-USDT-SWAP")
+        allowed, gate = cryptopulse.apply_trade_risk_gate(
+            plan, {"predicted": [99, 97, 95, 94, 93]}, confirmation, 30,
+            {"is_fake": False}, {"level": "low"}, {},
+        )
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["mode"], "cautious")
+        self.assertEqual(gate["risk_multiplier"], 0.5)
+        self.assertEqual(allowed["direction"], "short")
+
     def test_prediction_exposes_expanding_uncertainty_band(self):
         prediction = cryptopulse.predict_price(cryptopulse.calc_indicators(sample_market_data()))
         self.assertEqual(len(prediction["lower"]), 5)
@@ -275,6 +294,18 @@ class RouteTests(unittest.TestCase):
         self.assertIn("max_loss_amount:sizing.maxLoss", html)
         self.assertIn("系统推荐并采用杠杆", html)
         self.assertIn("本次加仓保证金", html)
+        self.assertIn("const WATCH_TIMEFRAMES=['15m','1H','4H']", html)
+        self.assertIn('id="favoriteToggle"', html)
+        self.assertIn("function scanWatchlist", html)
+        self.assertIn("function showWatchSignal", html)
+        self.assertIn("function signalRiskCap", html)
+        self.assertIn("轻仓模式", html)
+        self.assertIn('id=\'orderSetupModal\'', html)
+        self.assertIn("function submitOrderSetup", html)
+        self.assertIn("function actualTradePlanHtml", html)
+        self.assertIn("不再显示模型默认仓位", html)
+        self.assertIn("Notification.permission==='granted'", html)
+        self.assertIn("pushWechat(`⭐ ${title}`", html)
 
 
 if __name__ == "__main__":

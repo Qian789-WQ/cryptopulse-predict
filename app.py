@@ -1016,6 +1016,7 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
         return plan, {"allowed": False, "reasons": [plan["message"]], "cost_pct": roundtrip_cost_pct}
 
     reasons = []
+    warnings = []
     direction = plan["direction"]
     entry = plan["entry"]
     risk = abs(entry - plan["stop_loss"])
@@ -1031,10 +1032,15 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
 
     expected_move_pct = expected_move / entry * 100 if entry else 0
     minimum_move_pct = max(roundtrip_cost_pct + 0.05, (risk / entry * 100) * 1.5) if entry else 0
-    if not multi_tf_confirm.get("confirmed", False):
-        reasons.append("1H与4H方向不一致")
-    if adx < 20:
-        reasons.append(f"ADX={adx:.0f}，趋势强度不足")
+    compatible = multi_tf_confirm.get("compatible", multi_tf_confirm.get("confirmed", False))
+    if not compatible:
+        reasons.append(multi_tf_confirm.get("reason", "做单周期与上级趋势冲突"))
+    elif not multi_tf_confirm.get("confirmed", False):
+        warnings.append(multi_tf_confirm.get("reason", "低周期仍在回撤，按轻仓模式处理"))
+    if adx < 15:
+        reasons.append(f"ADX={adx:.0f}，市场缺少可交易趋势")
+    elif adx < 20:
+        warnings.append(f"ADX={adx:.0f}，趋势刚启动，仅允许轻仓")
     if fake_breakout.get("is_fake"):
         reasons.append("检测到假突破")
     if time_filter.get("level") == "high":
@@ -1053,7 +1059,7 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
         elif direction == "short" and rate < -0.05:
             reasons.append(f"空头资金费率{rate:+.4f}%过热，追空成本和拥挤风险过高")
     if expected_move_pct < minimum_move_pct:
-        reasons.append(f"预测空间{expected_move_pct:.2f}%不足以覆盖成本与风险阈值{minimum_move_pct:.2f}%")
+        warnings.append(f"线性基准空间{expected_move_pct:.2f}%低于参考阈值{minimum_move_pct:.2f}%，不把预测线当作硬门槛")
 
     barrier_rr = None
     if barriers and risk > 0:
@@ -1065,6 +1071,9 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
     gate = {
         "allowed": not reasons,
         "reasons": reasons,
+        "warnings": warnings,
+        "mode": "blocked" if reasons else "cautious" if warnings else "standard",
+        "risk_multiplier": 0 if reasons else 0.5 if warnings else 1.0,
         "expected_move_pct": round(expected_move_pct, 3),
         "minimum_move_pct": round(minimum_move_pct, 3),
         "cost_pct": roundtrip_cost_pct,
@@ -1093,6 +1102,7 @@ def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout
         })
         return blocked, gate
     plan["blocked"] = False
+    plan["risk_multiplier"] = gate["risk_multiplier"]
     return plan, gate
 
 
@@ -1188,8 +1198,8 @@ def analyze_multi_timeframe(symbol, current_timeframe):
         }
 
 
-def confirmation_from_multi_tf(multi_tf):
-    """Derive confirmation from the exact same snapshot shown in the UI."""
+def confirmation_from_multi_tf(multi_tf, candidate_direction=None):
+    """Use the selected trading timeframe as the anchor and faster frames for timing."""
     frames = multi_tf.get("timeframes", {})
     frame_4h, frame_1h = frames.get("4H", {}), frames.get("1H", {})
     if frame_4h.get("error") or frame_1h.get("error") or not frame_4h or not frame_1h:
@@ -1197,11 +1207,32 @@ def confirmation_from_multi_tf(multi_tf):
     score_4h, score_1h = frame_4h.get("score", 50), frame_1h.get("score", 50)
     dir_4h = "bullish" if score_4h >= 55 else "bearish" if score_4h <= 45 else "neutral"
     dir_1h = "bullish" if score_1h >= 55 else "bearish" if score_1h <= 45 else "neutral"
-    if dir_4h == dir_1h and dir_4h != "neutral":
-        return {"confirmed": True, "reason": f"4H({score_4h}分)和1H({score_1h}分)同向{dir_4h}",
-                "score_4h": score_4h, "score_1h": score_1h}
-    return {"confirmed": False,
-            "reason": f"4H({score_4h}分,{dir_4h})和1H({score_1h}分,{dir_1h})方向不一致，建议观望",
+    strict = dir_4h == dir_1h and dir_4h != "neutral"
+    if not candidate_direction or candidate_direction == "neutral":
+        compatible = strict
+    else:
+        target = "bullish" if candidate_direction == "long" else "bearish"
+        opposite = "bearish" if target == "bullish" else "bullish"
+        trading_tf = multi_tf.get("current_timeframe", "1H")
+        if trading_tf == "4H":
+            compatible = dir_4h == target
+        elif trading_tf == "15m":
+            frame_15m = frames.get("15m", {})
+            score_15m = frame_15m.get("score", 50)
+            dir_15m = "bullish" if score_15m >= 55 else "bearish" if score_15m <= 45 else "neutral"
+            compatible = dir_15m == target and dir_1h != opposite and dir_4h != opposite
+        else:
+            compatible = dir_1h == target and dir_4h != opposite
+
+    if strict:
+        reason = f"4H({score_4h}分)和1H({score_1h}分)同向{dir_4h}"
+    elif compatible and multi_tf.get("current_timeframe") == "4H":
+        reason = f"4H方向与信号一致；1H({score_1h}分)处于反向回撤，首仓减半且转向前禁止加仓"
+    elif compatible:
+        reason = f"做单周期方向有效，上级周期未反向；等待低周期触发并轻仓执行"
+    else:
+        reason = f"做单周期与上级趋势冲突：4H({score_4h}分,{dir_4h})，1H({score_1h}分,{dir_1h})"
+    return {"confirmed": strict, "compatible": compatible, "reason": reason,
             "score_4h": score_4h, "score_1h": score_1h}
 
 
@@ -1632,7 +1663,6 @@ def api_predict():
         leverage = calc_dynamic_leverage(float(latest["atr"]), market_price, adx_val,
                                          max_leverage=risk_settings["max_leverage"])
         multi_tf_data = analyze_multi_timeframe(symbol, timeframe)
-        multi_tf_confirmation = confirmation_from_multi_tf(multi_tf_data)
         tp = calc_trade_plan(score, market_price, float(latest["atr"]), sr, symbol,
                              leverage=leverage["recommended_leverage"],
                              account_size=risk_settings["account_size"],
@@ -1640,6 +1670,7 @@ def api_predict():
                              max_margin_pct=risk_settings["max_margin_pct"],
                              max_leverage=risk_settings["max_leverage"],
                              roundtrip_cost_pct=roundtrip_cost_pct)
+        multi_tf_confirmation = confirmation_from_multi_tf(multi_tf_data, tp.get("direction"))
         if tp["direction"] != "neutral":
             tp["time_stop"]["max_holding_minutes"] = {
                 "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
