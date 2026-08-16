@@ -246,7 +246,7 @@
                     <div class="ind-item"><div class="label">ATR波动</div><div class="value" id="atrVal">--</div></div>
                     <div class="ind-item"><div class="label">ADX趋势</div><div class="value" id="adxVal">--</div></div>
                     <div class="ind-item"><div class="label">5日动量</div><div class="value" id="momVal">--</div></div>
-                    <div class="ind-item"><div class="label">预估胜率</div><div class="value" id="winRateVal">--</div></div>
+                    <div class="ind-item"><div class="label">信号质量</div><div class="value" id="winRateVal">--</div></div>
                     <div class="ind-item"><div class="label">建议杠杆</div><div class="value" id="levVal">--</div></div>
                     <div class="ind-item"><div class="label">资金费率</div><div class="value" id="fundVal">--</div></div>
                     <div class="ind-item"><div class="label">恐慌贪婪</div><div class="value" id="fearGreedVal">--</div></div>
@@ -317,6 +317,7 @@
         const allSymbols = [{% for s in symbols %}{"id":"{{ s.id }}","name":"{{ s.name }}"},{% endfor %}];
         let selectedSymbol = allSymbols[0].id;
         let currentData = null;
+        let predictionRequestId = 0;
         
         function filterSymbols(){
             const q = document.getElementById('symbolSearch').value.toLowerCase();
@@ -328,9 +329,16 @@
         function showDropdown(){filterSymbols()}
         function hideDropdown(){document.getElementById('symbolDropdown').style.display='none'}
         function selectSymbol(id,name){
+            if(id===selectedSymbol){hideDropdown();return}
             selectedSymbol = id;
+            predictionRequestId++;
+            currentData = null;
             document.getElementById('symbolSearch').value = name;
             document.getElementById('symbol').value = id;
+            document.getElementById('symbolLabel').textContent=id.replace('-USDT-SWAP','')+' / USDT';
+            document.getElementById('currentPrice').textContent='--';
+            document.getElementById('priceChange').textContent='请重新预测';
+            document.getElementById('result').style.display='none';
             hideDropdown();
             if(wsConnected)subscribeSymbol(id);
         }
@@ -339,11 +347,13 @@
         function checkLoss(){const h=getHistory(),r=h.slice(-5);let l=0;for(let i=r.length-1;i>=0;i--){if(r[i].s<45)l++;else break}if(l>=3){const a=document.getElementById('lossAlert');a.textContent=`⚠️ 连续${l}次看空，建议暂停交易`;a.style.display='block'}}
         async function predict(){
             const sym=selectedSymbol,tf=document.getElementById('timeframe').value;
+            const requestId=++predictionRequestId;
             const btn=document.getElementById('predictBtn'),ld=document.getElementById('loading'),rs=document.getElementById('result'),er=document.getElementById('error');
             btn.disabled=true;ld.style.display='block';rs.style.display='none';er.style.display='none';document.getElementById('lossAlert').style.display='none';
             try{
                 const resp=await fetch(`/api/predict?symbol=${sym}&timeframe=${tf}`);
                 const d=await resp.json();
+                if(requestId!==predictionRequestId||sym!==selectedSymbol)return;
                 if(d.error){er.textContent='❌ '+d.error;er.style.display='block';return}
                 saveHistory({sym,tf,s:d.score,p:d.current_price});checkLoss();
                 document.getElementById('symbolLabel').textContent=sym.replace('-USDT-SWAP','')+' / USDT';
@@ -360,6 +370,7 @@
                 const fr=d.funding_rate,fe=document.getElementById('fundVal');fe.textContent=fr.rate_text;fe.className='value '+(fr.rate>0?'green':fr.rate<0?'red':'');
                 const sc=d.score,scEl=document.getElementById('scoreCircle');scEl.style.setProperty('--score',sc);
                 let col='#f39c12';if(sc>=70)col='#2ecc71';else if(sc>=55)col='#58d68d';else if(sc>=45)col='#f39c12';else if(sc>=30)col='#e67e22';else col='#e74c3c';
+                if(d.risk_gate&&!d.risk_gate.allowed)col='#f39c12';
                 scEl.style.setProperty('--score-color',col);document.getElementById('scoreVal').textContent=sc;
                 document.getElementById('signalVal').textContent=d.signal;document.getElementById('signalVal').className='score-signal signal-'+d.signal_class;
                 let fgText = '';
@@ -385,7 +396,9 @@
 const tp2Pct=((tp.tp2-tp.entry)/tp.entry*100).toFixed(2);
 const tp3Pct=((tp.tp3-tp.entry)/tp.entry*100).toFixed(2);
 const slPct=((tp.stop_loss-tp.entry)/tp.entry*100).toFixed(2);
-document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div style="text-align:center;color:#f39c12;padding:16px">${tp.message}</div>`:`<div style="text-align:center;margin-bottom:8px"><span style="font-size:16px;font-weight:800" class="${tp.direction==='long'?'green':'red'}">${tp.direction_text}</span><span style="margin-left:8px;color:#667eea;font-size:12px">盈亏比1:${tp.risk_reward}</span></div><div class="tp-grid"><div class="tp-item entry"><div class="label">入场</div><div class="value">$${tp.entry.toLocaleString()}</div></div><div class="tp-item sl"><div class="label">止损 ${slPct}%</div><div class="value red">$${tp.stop_loss.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP1 +${tp1Pct}% 平${tp.tp1_close_pct}%</div><div class="value green">$${tp.tp1.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP2 +${tp2Pct}% 平${tp.tp2_close_pct}%</div><div class="value green">$${tp.tp2.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP3 +${tp3Pct}% 平${tp.tp3_close_pct}%</div><div class="value green">$${tp.tp3.toLocaleString()}</div></div><div class="tp-item"><div class="label">仓位</div><div class="value">${tp.position_pct}%</div></div></div><div style="margin-top:6px;font-size:10px;color:#525f7a;text-align:center">风险$${tp.risk_amount} (账户$1000的1%)</div>`;
+document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'
+    ?`<div style="text-align:center;color:#f39c12;padding:16px">${tp.message}</div>`
+    :`<div style="text-align:center;margin-bottom:8px"><span style="font-size:16px;font-weight:800" class="${tp.direction==='long'?'green':'red'}">${tp.direction_text}</span><span style="margin-left:8px;color:#667eea;font-size:12px">盈亏比1:${tp.risk_reward}</span></div><div class="tp-grid"><div class="tp-item entry"><div class="label">入场</div><div class="value">$${tp.entry.toLocaleString()}</div></div><div class="tp-item sl"><div class="label">止损 ${slPct}%</div><div class="value red">$${tp.stop_loss.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP1 ${tp1Pct}% 平${tp.tp1_close_pct}%</div><div class="value green">$${tp.tp1.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP2 ${tp2Pct}% 平${tp.tp2_close_pct}%</div><div class="value green">$${tp.tp2.toLocaleString()}</div></div><div class="tp-item tp"><div class="label">TP3 ${tp3Pct}% 平${tp.tp3_close_pct}%</div><div class="value green">$${tp.tp3.toLocaleString()}</div></div><div class="tp-item"><div class="label">保证金 / 杠杆</div><div class="value">${tp.margin_pct}% / ${tp.leverage}x</div></div></div><div style="margin-top:6px;font-size:10px;color:#525f7a;text-align:center">保证金 $${tp.margin_amount} · 名义仓位 $${tp.notional_value} · 止损风险 $${tp.risk_amount}（预算 $${tp.risk_budget}）</div>`;
                 document.getElementById('trendVal').textContent=d.prediction.trend;document.getElementById('trendVal').className=d.prediction.trend==='上涨'?'green':'red';
                 document.getElementById('volatVal').textContent=d.prediction.volatility.toFixed(2)+'%';
                 document.getElementById('revVal').textContent=(d.prediction.mean_reversion>=0?'+':'')+d.prediction.mean_reversion.toFixed(2)+'%';
@@ -400,17 +413,17 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 // ADX和胜率
                 document.getElementById('adxVal').textContent=d.adx.toFixed(0);
                 document.getElementById('adxVal').className='value '+(d.adx>=30?'green':d.adx<20?'yellow':'');
-                document.getElementById('winRateVal').textContent=d.win_rate+'%';
-                document.getElementById('winRateVal').className='value '+(d.win_rate>=55?'green':d.win_rate<=45?'red':'yellow');
+                document.getElementById('winRateVal').textContent=d.signal_quality+'分';
+                document.getElementById('winRateVal').className='value '+(d.signal_quality>=65?'green':d.signal_quality<=45?'red':'yellow');
                 document.getElementById('levVal').textContent=d.leverage.recommended_leverage+'x';
                 
                 // 移动止损
                 const ts=d.trailing_stop;
-                document.getElementById('trailingStop').innerHTML=`<span class="gray">移动止损：</span>${ts.note} <span class="${ts.stage==='entry'?'red':'green'}">止损 $${ts.stop_loss.toLocaleString()}</span>`;
+                document.getElementById('trailingStop').innerHTML=`<span class="gray">移动止损：</span>${ts.note}${ts.stop_loss!=null?` <span class="${ts.stage==='entry'?'red':'green'}">止损 $${ts.stop_loss.toLocaleString()}</span>`:''}`;
                 
                 // 凯利仓位
                 const k=d.kelly;
-                document.getElementById('kellyPos').innerHTML=`<span class="gray">凯利仓位：</span>${k.note}`;
+                document.getElementById('kellyPos').innerHTML=`<span class="gray">仓位模型：</span>${k.note}`;
                 
                 // 信号强度
                 const ss=d.trade_plan;
@@ -420,8 +433,14 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     ssEl.style.display='block';
                     ssEl.style.background=colors[ss.signal_strength]+'22';
                     ssEl.style.color=colors[ss.signal_strength];
-                    ssEl.textContent=`${ss.strength_text} · 评分${d.score}分 · 建议仓位${ss.position_pct}%`;
+                    ssEl.textContent=`${ss.strength_text} · 评分${d.score}分 · 保证金${ss.margin_pct}% · 名义仓位$${ss.notional_value}`;
                 }else{ssEl.style.display='none'}
+
+                const cf=d.confidence,cfEl=document.getElementById('confidenceBar');
+                cfEl.style.display='block';
+                cfEl.style.background=cf.score>=65?'rgba(46,204,113,0.1)':'rgba(243,156,18,0.1)';
+                cfEl.style.color=cf.score>=65?'#2ecc71':'#f39c12';
+                cfEl.textContent=`指标一致性 ${cf.score}%（${cf.level}）· ${cf.note}`;
                 
                 // 多周期确认
                 const mtfc=d.multi_tf_confirm;
@@ -467,11 +486,11 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 }
                 
                 // 显示持仓时间提醒
-                if(d.holding_time){
+                if(d.holding_time&&d.trade_plan.direction!=='neutral'){
                     const hr=document.getElementById('holdingReminder');
                     hr.style.display='flex';
                     document.getElementById('holdingText').textContent=`⏰ 建议持仓 ${d.holding_time.min_text}~${d.holding_time.max_text}，点击设置提醒`;
-                }
+                }else{document.getElementById('holdingReminder').style.display='none'}
                 
                 // 保存预测记录
                 savePredictionResult(d);
@@ -531,7 +550,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const r=document.getElementById('liqResult');
             r.style.display='block';
             const movePct=Math.abs(liqPrice-price)/price*100;
-            r.innerHTML=`<span class="red">强平价格：$${liqPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><br><span style="color:#525f7a">${dir==='long'?'下跌':'上涨'} ${movePct.toFixed(2)}% 爆仓</span>`;
+            r.innerHTML=`<span class="red">粗略强平估算：$${liqPrice.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span><br><span style="color:#525f7a">${dir==='long'?'下跌':'上涨'} ${movePct.toFixed(2)}% · 实际以OKX标记价格、保证金模式和维持保证金档位为准</span>`;
         }
         
         // 利润计算
@@ -677,6 +696,10 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         let currentHistoryTab='predictions';
         function getOrders(){try{return JSON.parse(localStorage.getItem('cp_orders')||'[]')}catch(e){return[]}}
         function saveOrders(orders){localStorage.setItem('cp_orders',JSON.stringify(orders))}
+        function orderNotional(order){
+            if(Number.isFinite(order.notional_value))return order.notional_value;
+            return 1000*(order.position_pct||0)/100*(order.leverage||1);
+        }
         
         function quickCloseOrder(){
             const orders=getOrders();
@@ -688,7 +711,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const closePrice=parseFloat(price);
             if(!Number.isFinite(closePrice)||closePrice<=0){alert('请输入有效的平仓价格');return}
             const pnlPct=order.direction==='long'?(closePrice-order.entry)/order.entry*100:(order.entry-closePrice)/order.entry*100;
-            const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
+            const pnl=pnlPct/100*orderNotional(order);
             order.status='closed';
             order.close_price=closePrice;
             order.close_time=new Date().toISOString();
@@ -728,11 +751,13 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 tp2_close_pct:tp.tp2_close_pct,
                 tp3_close_pct:tp.tp3_close_pct,
                 position_pct:tp.position_pct,
+                margin_pct:tp.margin_pct,
+                margin_amount:tp.margin_amount,
+                notional_value:tp.notional_value,
                 risk_reward:tp.risk_reward,
                 risk_amount:tp.risk_amount,
                 leverage:d.leverage.recommended_leverage,
-                win_rate:d.win_rate,
-                kelly_pct:d.kelly.half_kelly_pct,
+                signal_quality:d.signal_quality,
                 // 技术指标
                 current_price:d.current_price,
                 pct_change:d.pct_change,
@@ -800,6 +825,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         let livePrices={};
         let ws=null;
         let wsConnected=false;
+        let subscribedSymbol=null;
         
         // WebSocket实时价格
         function connectWebSocket(){
@@ -808,6 +834,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 ws=new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
                 ws.onopen=()=>{
                     wsConnected=true;
+                    subscribedSymbol=null;
                     console.log('WebSocket已连接');
                     subscribeSymbol(selectedSymbol);
                 };
@@ -816,12 +843,14 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         const msg=JSON.parse(event.data);
                         if(msg.data&&msg.data.length>0){
                             const price=parseFloat(msg.data[0].last);
-                            if(price>0)handleWsPrice(price);
+                            const instId=msg.arg&&msg.arg.instId?msg.arg.instId:msg.data[0].instId;
+                            if(price>0&&instId===selectedSymbol)handleWsPrice(price,instId);
                         }
                     }catch(e){}
                 };
                 ws.onclose=()=>{
                     wsConnected=false;
+                    subscribedSymbol=null;
                     setTimeout(connectWebSocket,5000);
                 };
                 ws.onerror=()=>{wsConnected=false};
@@ -831,13 +860,17 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         function subscribeSymbol(symbol){
             if(ws&&wsConnected){
                 try{
-                    ws.send(JSON.stringify({op:'unsubscribe',args:[{channel:'tickers',instId:symbol}]}));
+                    if(subscribedSymbol&&subscribedSymbol!==symbol){
+                        ws.send(JSON.stringify({op:'unsubscribe',args:[{channel:'tickers',instId:subscribedSymbol}]}));
+                    }
                     ws.send(JSON.stringify({op:'subscribe',args:[{channel:'tickers',instId:symbol}]}));
+                    subscribedSymbol=symbol;
                 }catch(e){}
             }
         }
         
-        function handleWsPrice(price){
+        function handleWsPrice(price,instId){
+            if(instId!==selectedSymbol)return;
             const priceEl=document.getElementById('currentPrice');
             if(priceEl){
                 const oldPrice=parseFloat(priceEl.textContent.replace(/[^0-9.]/g,''))||price;
@@ -974,6 +1007,16 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     showOrderAlert('TP1到达', symbol, currentPrice, order.tp1, 'success');
                 }
             }
+
+            const maxMinutes=order.time_stop&&order.time_stop.max_holding_minutes;
+            const heldMinutes=(Date.now()-new Date(order.time).getTime())/60000;
+            if(maxMinutes&&heldMinutes>=maxMinutes&&!alertedLevels[key]['time_stop']&&!alertedLevels[key]['tp1_hit']){
+                alertedLevels[key]['time_stop']=true;
+                const msg=`${symbol} 已持仓${heldMinutes.toFixed(0)}分钟仍未到TP1，请重新评估并考虑平仓`;
+                pushWechat('⏰ 时间止损提醒',msg);
+                if('Notification' in window&&Notification.permission==='granted')new Notification('⏰ 时间止损提醒',{body:msg});
+                showOrderAlert('时间止损',symbol,currentPrice,order.entry,'warning');
+            }
         }
         
         function showOrderAlert(levelName, symbol, price, targetPrice, type){
@@ -1015,7 +1058,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             openOrders.forEach(o=>{
                 const price=livePrices[o.symbol]||o.entry;
                 const pnlPct=o.direction==='long'?(price-o.entry)/o.entry*100:(o.entry-price)/o.entry*100;
-                floatingPnl+=pnlPct/100*1000*o.position_pct/100*o.leverage;
+                floatingPnl+=pnlPct/100*orderNotional(o);
             });
             const winRate=closedOrders.length?wins.length/closedOrders.length*100:0;
             // 信号胜率统计（基于预测记录）
@@ -1038,7 +1081,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 if(o.status==='open'){
                     currentPrice=livePrices[o.symbol]||o.entry;
                     floatPnlPct=o.direction==='long'?(currentPrice-o.entry)/o.entry*100:(o.entry-currentPrice)/o.entry*100;
-                    floatPnl=floatPnlPct/100*1000*o.position_pct/100*o.leverage;
+                    floatPnl=floatPnlPct/100*orderNotional(o);
                 }
                 return `<div style="padding:10px;background:#131a2b;border-radius:6px;margin-bottom:6px;border-left:3px solid ${color}">
                     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
@@ -1051,9 +1094,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <span>TP1: $${o.tp1.toLocaleString()}</span>
                         <span>TP3: $${o.tp3.toLocaleString()}</span>
                         <span>评分: ${o.score}分${o.strength_text?' ('+o.strength_text+')':''}</span>
-                        <span>胜率: ${o.win_rate}%</span>
+                        <span>信号质量: ${o.signal_quality??'--'}分</span>
                         <span>RSI: ${o.rsi.toFixed(0)} ADX: ${o.adx.toFixed(0)}</span>
-                        <span>杠杆: ${o.leverage}x 仓位: ${o.position_pct}%</span>
+                        <span>杠杆: ${o.leverage}x 保证金: ${o.margin_pct??o.position_pct}%</span>
                     </div>
                     ${o.status==='open'?`<div style="margin-top:6px;padding:6px 8px;background:${floatPnl>=0?'rgba(46,204,113,0.1)':'rgba(231,76,60,0.1)'};border-radius:5px">
                         <div style="display:flex;justify-content:space-between;font-size:11px">
@@ -1076,7 +1119,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const price=prompt(`平仓 ${order.symbol.replace('-USDT-SWAP','')} ${order.direction_text}\n入场价: $${order.entry}\n请输入平仓价格:`, order.entry);
             if(!price)return;
             const pnlPct=order.direction==='long'?(parseFloat(price)-order.entry)/order.entry*100:(order.entry-parseFloat(price))/order.entry*100;
-            const pnl=pnlPct/100*1000*order.position_pct/100*order.leverage;
+            const pnl=pnlPct/100*orderNotional(order);
             order.status='closed';
             order.close_price=parseFloat(price);
             order.close_time=new Date().toISOString();
@@ -1280,7 +1323,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
                         <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                     </div>
-                    <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days}天 / 请求${data.days}天 · ${data.bars_count}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                    <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days}天 / 请求${data.days}天 · ${data.bars_count}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 手续费${data.fee_rate_pct}%/边 · 滑点${data.slippage_rate_pct}%/边<br>${data.strategy_note}</div>
                 `;
                 // 保存回测结果
                 localStorage.setItem('cp_backtest_result', JSON.stringify(data));
@@ -1317,7 +1360,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800">${data.profit_factor}</div><div style="font-size:10px;color:#525f7a">盈亏比</div></div>
                             <div style="text-align:center;padding:8px;background:#131a2b;border-radius:6px"><div style="font-size:18px;font-weight:800;color:${pnlColor}">$${data.final_balance}</div><div style="font-size:10px;color:#525f7a">最终余额</div></div>
                         </div>
-                        <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days??data.days}天 / 请求${data.days}天 · ${data.bars_count??'--'}根K线${data.history_truncated?'（短周期数据已限3000根）':''} · 初始资金$${data.initial_balance} · 10%仓位·10倍杠杆 · 止损1ATR·止盈3ATR</div>
+                        <div style="font-size:11px;color:#525f7a">回测覆盖: ${data.actual_days??data.days}天 / 请求${data.days}天 · ${data.bars_count??'--'}根K线${data.history_truncated?'（短周期数据已限3000根）':''}<br>${data.strategy_note??'旧版回测结果，建议重新运行'}</div>
                     `;
                 }catch(e){}
             }
@@ -1408,7 +1451,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const signalEl=document.getElementById('signalVal');
             if(signalEl){
                 signalEl.textContent=d.signal;
-                signalEl.style.color=d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
+                signalEl.style.color=d.risk_gate&&!d.risk_gate.allowed?'#f39c12':d.score>=60?'#2ecc71':d.score<=40?'#e74c3c':'#f39c12';
             }
             
             // 更新指标（只更新存在的元素）
@@ -1425,7 +1468,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
             const momBadgeEl=document.getElementById('momValBadge');
             if(momBadgeEl)momBadgeEl.textContent=(d.prediction.momentum>=0?'+':'')+d.prediction.momentum.toFixed(1)+'%';
             const winEl=document.getElementById('winRateVal');
-            if(winEl)winEl.textContent=d.win_rate+'%';
+            if(winEl)winEl.textContent=d.signal_quality+'分';
             const levEl=document.getElementById('levVal');
             if(levEl)levEl.textContent=d.leverage.recommended_leverage+'x';
             const fundEl=document.getElementById('fundVal');
@@ -1451,13 +1494,15 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                         <div>TP1(平${tp.tp1_close_pct}%): <strong style="color:#2ecc71">$${tp.tp1.toFixed(2)}</strong></div>
                         <div>TP2(平${tp.tp2_close_pct}%): <strong style="color:#2ecc71">$${tp.tp2.toFixed(2)}</strong></div>
                         <div>TP3(平${tp.tp3_close_pct}%): <strong style="color:#2ecc71">$${tp.tp3.toFixed(2)}</strong></div>
-                        <div>仓位: <strong>${tp.position_pct}%</strong></div>
+                        <div>保证金: <strong>${tp.margin_pct}% / ${tp.leverage}x</strong></div>
                     </div>
-                    <div style="margin-top:6px;font-size:10px;color:#525f7a">风险: $${tp.risk_amount} | 移动止损: ${d.trailing_stop.note}</div>
+                    <div style="margin-top:6px;font-size:10px;color:#525f7a">名义仓位: $${tp.notional_value} · 止损风险: $${tp.risk_amount} · ${d.trailing_stop.note}</div>
                 `;
             }else{
                 document.getElementById('tradePlan').innerHTML=`<div style="text-align:center;color:#f39c12;padding:16px">${d.trade_plan.message}</div>`;
             }
+            const holdingReminderEl=document.getElementById('holdingReminder');
+            if(holdingReminderEl)holdingReminderEl.style.display=d.trade_plan.direction==='neutral'?'none':'flex';
             
             // 渲染补仓/平仓提醒卡片（总是调用）
             renderPyramidCard(d);
@@ -1533,8 +1578,8 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                 const entry=openOrder.entry;
                 const atr=openOrder.atr||100;
                 
-                const add2=isLong?entry-atr*0.5:entry+atr*0.5;
-                const add3=isLong?entry-atr*1.0:entry+atr*1.0;
+                const add2=openOrder.pyramid&&openOrder.pyramid.entry2?openOrder.pyramid.entry2.price:(isLong?entry+atr*0.5:entry-atr*0.5);
+                const add3=openOrder.pyramid&&openOrder.pyramid.entry3?openOrder.pyramid.entry3.price:(isLong?entry+atr:entry-atr);
                 const dist2=Math.abs(price-add2)/add2*100;
                 const dist3=Math.abs(price-add3)/add3*100;
                 const nextAdd = dist2<dist3 ? {price:add2, pct:30, dist:dist2, name:'二仓'} : {price:add3, pct:20, dist:dist3, name:'三仓'};
@@ -1562,9 +1607,9 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
                         <div style="background:${nextAdd.dist<0.5?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${nextAdd.dist<0.5?'#2ecc71':'#2a3450'}">
-                            <div style="font-size:9px;color:#f39c12;font-weight:600">📥 补仓${nextAdd.name}</div>
+                            <div style="font-size:9px;color:#f39c12;font-weight:600">📈 顺势加仓${nextAdd.name}</div>
                             <div style="font-size:13px;font-weight:700;color:#fff">$${nextAdd.price.toLocaleString()}</div>
-                            <div style="font-size:9px;color:${nextAdd.dist<0.5?'#2ecc71':'#525f7a'}">${nextAdd.dist<0.5?'🔔 可补仓':'距'+nextAdd.dist.toFixed(1)+'%'}</div>
+                            <div style="font-size:9px;color:${nextAdd.dist<0.5?'#2ecc71':'#525f7a'}">${nextAdd.dist<0.5?'🔔 等确认后加仓':'距'+nextAdd.dist.toFixed(1)+'%'}</div>
                         </div>
                         <div style="background:${distTp1<0.3?'#2ecc7122':'#131a2b'};border-radius:6px;padding:6px;border:1px solid ${distTp1<0.3?'#2ecc71':'#2a3450'}">
                             <div style="font-size:9px;color:#2ecc71;font-weight:600">💰 TP1止盈</div>
@@ -1631,45 +1676,7 @@ document.getElementById('tradePlan').innerHTML=tp.direction==='neutral'?`<div st
         
         function renderEconomicEvents(){
             const el=document.getElementById('economicEvents');
-            const now=new Date();
-            const day=now.getDay();
-            const date=now.getDate();
-            
-            // 判断近期是否有重大事件
-            let upcomingEvents=[];
-            
-            // 非农：每月第一个周五
-            if(day===5 && date<=7){
-                upcomingEvents.push({...economicEvents[0],time:'今天',urgent:true});
-            }
-            // CPI：每月10-15日左右
-            if(date>=10 && date<=15){
-                upcomingEvents.push({...economicEvents[1],time:'本周',urgent:false});
-            }
-            // 利率决议：每月下旬（约20-28日）
-            if(date>=20 && date<=28){
-                upcomingEvents.push({...economicEvents[2],time:'本周',urgent:true});
-            }
-            // 初请失业金：每周四
-            if(day===4){
-                upcomingEvents.push({...economicEvents[5],time:'今天',urgent:false});
-            }
-            
-            if(upcomingEvents.length===0){
-                el.innerHTML='<div style="color:#525f7a;text-align:center;padding:8px">近期无重大事件</div>';
-                return;
-            }
-            
-            el.innerHTML=upcomingEvents.map(e=>{
-                const color=e.impact==='极高'?'#e74c3c':e.impact==='高'?'#f39c12':'#f1c40f';
-                return `<div style="padding:6px 8px;background:${color}15;border-left:3px solid ${color};border-radius:4px;margin-bottom:4px">
-                    <div style="display:flex;justify-content:space-between">
-                        <span style="color:${color};font-weight:700">${e.event}</span>
-                        <span style="color:#525f7a;font-size:10px">${e.time}</span>
-                    </div>
-                    <div style="font-size:10px;color:#8892b0;margin-top:2px">影响: ${e.impact} | ${e.note}</div>
-                </div>`;
-            }).join('');
+            el.innerHTML='<div style="color:#f39c12;text-align:center;padding:8px">经济日历尚未接入可靠实时数据<br><span style="font-size:10px;color:#525f7a">交易前请核对官方日历；本站不再用固定日期猜测事件</span></div>';
         }
         
         async function logout(){

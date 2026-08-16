@@ -667,8 +667,8 @@ def calc_holding_time(timeframe, prediction, atr, current_price):
     
 
 
-def calc_trade_plan(score, current_price, atr, sr, symbol):
-    """计算精确交易计划：入场、止损、TP1/2/3、仓位、盈亏比"""
+def calc_trade_plan(score, current_price, atr, sr, symbol, leverage=3, account_size=1000):
+    """Build a risk-budgeted plan with unambiguous margin and notional values."""
     # 基于评分决定方向
     if score >= 55:
         direction = "long"
@@ -682,7 +682,8 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
             "direction_text": "观望",
             "entry": None, "stop_loss": None,
             "tp1": None, "tp2": None, "tp3": None,
-            "position_size": 0, "position_pct": 0, "risk_reward": 0,
+            "position_size": 0, "position_pct": 0, "margin_amount": 0,
+            "margin_pct": 0, "notional_value": 0, "risk_reward": 0,
             "signal_strength": "none", "strength_text": "无交易信号",
             "pyramid": {"enabled": False}, "time_stop": {"enabled": False},
             "message": "信号不明确，建议观望"
@@ -712,27 +713,22 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
     reward = abs(tp1 - entry)
     risk_reward = round(reward / risk, 2) if risk > 0 else 0
     
-    # 建议仓位（基于1%风险法则，假设账户1000USDT）
-    account_size = 1000  # 默认账户大小
-    risk_per_trade = 0.01  # 1%风险
-    risk_amount = account_size * risk_per_trade
-    if risk > 0:
-        position_size = round(risk_amount / risk * entry, 2)
-    else:
-        position_size = 0
-    
-    # 仓位百分比
-    position_pct = round(position_size / account_size * 100, 1)
+    # Risk budget is 1% of equity. Margin use is capped at 25%; leverage at 5x.
+    leverage = max(1, min(int(leverage), 5))
+    risk_budget = account_size * 0.01
+    stop_pct = risk / entry if entry > 0 else 0
+    target_notional = risk_budget / stop_pct if stop_pct > 0 else 0
+    max_margin_amount = account_size * 0.25
+    notional_value = min(target_notional, max_margin_amount * leverage)
+    margin_amount = notional_value / leverage if leverage else 0
+    margin_pct = margin_amount / account_size * 100 if account_size else 0
+    actual_risk_amount = notional_value * stop_pct
     
     # 每个止盈位的平仓比例
     tp1_close_pct = 30  # TP1平30%
     tp2_close_pct = 30  # TP2平30%
     tp3_close_pct = 40  # TP3平40%
     
-    # 限制最大仓位不超过200%（2倍杠杆）
-    position_pct = min(position_pct, 200)
-    position_size = round(account_size * position_pct / 100, 2)
-
     score_distance = abs(score - 50)
     if score_distance >= 20:
         signal_strength, strength_text = "strong", "强信号"
@@ -741,8 +737,9 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
     else:
         signal_strength, strength_text = "weak", "弱信号"
 
-    entry2 = entry - atr * 0.5 if direction == "long" else entry + atr * 0.5
-    entry3 = entry - atr if direction == "long" else entry + atr
+    # Add only after price confirms the trade; never average down into the stop.
+    entry2 = entry + atr * 0.5 if direction == "long" else entry - atr * 0.5
+    entry3 = entry + atr if direction == "long" else entry - atr
     pyramid = {
         "enabled": True,
         "entry1": {"price": round(entry, 2), "pct": 50},
@@ -766,10 +763,16 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
         "tp1_close_pct": tp1_close_pct,
         "tp2_close_pct": tp2_close_pct,
         "tp3_close_pct": tp3_close_pct,
-        "position_size": position_size,
-        "position_pct": position_pct,
+        "position_size": round(notional_value, 2),
+        "position_pct": round(margin_pct, 1),
+        "margin_amount": round(margin_amount, 2),
+        "margin_pct": round(margin_pct, 1),
+        "notional_value": round(notional_value, 2),
+        "leverage": leverage,
         "risk_reward": risk_reward,
-        "risk_amount": round(risk_amount, 2),
+        "risk_amount": round(actual_risk_amount, 2),
+        "risk_budget": round(risk_budget, 2),
+        "stop_pct": round(stop_pct * 100, 3),
         "atr_sl_mult": atr_sl_mult,
         "signal_strength": signal_strength,
         "strength_text": strength_text,
@@ -777,6 +780,76 @@ def calc_trade_plan(score, current_price, atr, sr, symbol):
         "time_stop": time_stop,
         "message": f"{direction_text}，盈亏比1:{risk_reward}"
     }
+
+
+def apply_trade_risk_gate(plan, prediction, multi_tf_confirm, adx, fake_breakout,
+                          time_filter, support_resistance, roundtrip_cost_pct=0.14):
+    """Turn conflicting/uneconomic candidates into an explicit no-trade plan."""
+    if plan["direction"] == "neutral":
+        return plan, {"allowed": False, "reasons": [plan["message"]], "cost_pct": roundtrip_cost_pct}
+
+    reasons = []
+    direction = plan["direction"]
+    entry = plan["entry"]
+    risk = abs(entry - plan["stop_loss"])
+    predicted = prediction.get("predicted") or []
+    if direction == "long":
+        expected_move = max([0] + [price - entry for price in predicted])
+        barriers = [support_resistance.get(key) for key in ("pivot", "r1", "r2", "swing_high")]
+        barriers = [value for value in barriers if value is not None and value > entry]
+    else:
+        expected_move = max([0] + [entry - price for price in predicted])
+        barriers = [support_resistance.get(key) for key in ("pivot", "s1", "s2", "swing_low")]
+        barriers = [value for value in barriers if value is not None and value < entry]
+
+    expected_move_pct = expected_move / entry * 100 if entry else 0
+    minimum_move_pct = max(roundtrip_cost_pct + 0.05, (risk / entry * 100) * 1.5) if entry else 0
+    if not multi_tf_confirm.get("confirmed", False):
+        reasons.append("1H与4H方向不一致")
+    if adx < 20:
+        reasons.append(f"ADX={adx:.0f}，趋势强度不足")
+    if fake_breakout.get("is_fake"):
+        reasons.append("检测到假突破")
+    if time_filter.get("level") == "high":
+        reasons.append(time_filter.get("reason", "当前时段流动性风险较高"))
+    if expected_move_pct < minimum_move_pct:
+        reasons.append(f"预测空间{expected_move_pct:.2f}%不足以覆盖成本与风险阈值{minimum_move_pct:.2f}%")
+
+    barrier_rr = None
+    if barriers and risk > 0:
+        nearest = min(barriers) if direction == "long" else max(barriers)
+        barrier_rr = abs(nearest - entry) / risk
+        if barrier_rr < 1.5:
+            reasons.append(f"最近支撑/阻力仅提供{barrier_rr:.1f}R空间")
+
+    gate = {
+        "allowed": not reasons,
+        "reasons": reasons,
+        "expected_move_pct": round(expected_move_pct, 3),
+        "minimum_move_pct": round(minimum_move_pct, 3),
+        "cost_pct": roundtrip_cost_pct,
+        "barrier_risk_reward": round(barrier_rr, 2) if barrier_rr is not None else None,
+    }
+    if reasons:
+        blocked = dict(plan)
+        blocked.update({
+            "direction": "neutral",
+            "direction_text": "风控观望",
+            "blocked": True,
+            "candidate_direction": direction,
+            "blocked_reasons": reasons,
+            "position_size": 0,
+            "position_pct": 0,
+            "margin_amount": 0,
+            "margin_pct": 0,
+            "notional_value": 0,
+            "risk_amount": 0,
+            "pyramid": {"enabled": False},
+            "message": "风控拦截：" + "；".join(reasons),
+        })
+        return blocked, gate
+    plan["blocked"] = False
+    return plan, gate
 
 
 def analyze_multi_timeframe(symbol, current_timeframe):
@@ -791,6 +864,8 @@ def analyze_multi_timeframe(symbol, current_timeframe):
                 results[tf] = {"trend": "未知", "score": 50, "error": error or "数据不足"}
                 continue
             
+            if "confirm" in df.columns:
+                df = df[df["confirm"].astype(str) == "1"].copy()
             df = calc_indicators(df)
             latest = df.iloc[-1]
             
@@ -1089,27 +1164,28 @@ def check_time_filter():
     return {"is_bad_time": False, "reason": "交易时段正常", "level": "low"}
 
 def calc_dynamic_leverage(atr, current_price, adx):
-    """动态杠杆建议"""
+    """Conservative leverage suggestion; volatility can expand without warning."""
     atr_pct = atr / current_price * 100
     if atr_pct > 4:
-        base_leverage = 5
+        base_leverage = 1
     elif atr_pct > 2.5:
-        base_leverage = 10
+        base_leverage = 2
     elif atr_pct > 1.5:
-        base_leverage = 20
+        base_leverage = 3
     else:
-        base_leverage = 30
+        base_leverage = 4
     if adx > 30:
-        base_leverage = min(base_leverage * 1.3, 50)
+        base_leverage = min(base_leverage + 1, 5)
     elif adx < 20:
-        base_leverage = base_leverage * 0.7
+        base_leverage = max(base_leverage - 1, 1)
     return {"recommended_leverage": round(base_leverage), "atr_pct": round(atr_pct, 2),
-            "adx": round(float(adx), 1), "note": f"波动率{atr_pct:.1f}% + ADX{adx:.0f}，建议{round(base_leverage)}倍杠杆"}
+            "adx": round(float(adx), 1), "max_leverage": 5,
+            "note": f"ATR{atr_pct:.1f}% + ADX{adx:.0f}，保守上限{round(base_leverage)}倍"}
 
 def calc_trailing_stop(plan, current_price):
     """移动止损规则"""
     if plan["direction"] == "neutral":
-        return {"stage": "none", "stop_loss": plan["stop_loss"], "note": "观望中"}
+        return {"stage": "none", "stop_loss": None, "note": "观望中，不启用移动止损"}
     entry = plan["entry"]
     sl = plan["stop_loss"]
     tp1 = plan["tp1"]
@@ -1219,12 +1295,21 @@ def api_predict():
         if validation_error:
             return validation_error
         
-        df, error = fetch_klines(symbol, timeframe, 500)
+        raw_df, error = fetch_klines(symbol, timeframe, 300)
         if error:
             return jsonify({"error": f"获取数据失败: {error}"}), 500
-        if df is None or len(df) < 100:
+        if raw_df is None or len(raw_df) < 100:
             return jsonify({"error": "数据不足"}), 500
-        
+        market_price = float(raw_df.iloc[-1]["close"])
+        if "confirm" in raw_df.columns:
+            confirmed_df = raw_df[raw_df["confirm"].astype(str) == "1"].copy()
+        else:
+            confirmed_df = raw_df.copy()
+        if len(confirmed_df) < 100:
+            return jsonify({"error": "已收盘K线不足100根"}), 500
+
+        # Indicators and signals only use closed candles; the latest tick is entry/display only.
+        df = confirmed_df
         df = calc_indicators(df)
         latest = df.iloc[-1]
         pred = predict_price(df, periods=5)
@@ -1247,15 +1332,8 @@ def api_predict():
             signal = "强烈看空"
             signal_class = "strong-bearish"
         
-        ht = calc_holding_time(timeframe, pred, float(latest["atr"]), float(latest["close"]))
-        tp = calc_trade_plan(score, float(latest["close"]), float(latest["atr"]), sr, symbol)
-        if tp["direction"] != "neutral":
-            tp["time_stop"]["max_holding_minutes"] = {
-                "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
-                "1H": 300, "2H": 600, "4H": 1200, "6H": 1800, "8H": 2400,
-                "12H": 3600, "1D": 7200, "3D": 21600, "1W": 50400, "1M": 216000,
-            }.get(timeframe, 300)
-        
+        ht = calc_holding_time(timeframe, pred, float(latest["atr"]), market_price)
+
         # 新增交易员级分析
         divergence = detect_divergence(df)
         fake_breakout = detect_fake_breakout(df)
@@ -1263,10 +1341,27 @@ def api_predict():
         streak = get_consecutive_streak(df)
         time_filter = check_time_filter()
         adx_val = float(latest["adx"])
-        leverage = calc_dynamic_leverage(float(latest["atr"]), float(latest["close"]), adx_val)
-        trailing_stop = calc_trailing_stop(tp, float(latest["close"]))
+        leverage = calc_dynamic_leverage(float(latest["atr"]), market_price, adx_val)
+        multi_tf_data = analyze_multi_timeframe(symbol, timeframe)
+        multi_tf_confirmation = check_multi_tf_confirmation(symbol, timeframe)
+        tp = calc_trade_plan(score, market_price, float(latest["atr"]), sr, symbol,
+                             leverage=leverage["recommended_leverage"])
+        if tp["direction"] != "neutral":
+            tp["time_stop"]["max_holding_minutes"] = {
+                "1m": 5, "3m": 15, "5m": 25, "15m": 75, "30m": 150,
+                "1H": 300, "2H": 600, "4H": 1200, "6H": 1800, "8H": 2400,
+                "12H": 3600, "1D": 7200, "3D": 21600, "1W": 50400, "1M": 216000,
+            }.get(timeframe, 300)
+        tp, risk_gate = apply_trade_risk_gate(
+            tp, pred, multi_tf_confirmation, adx_val, fake_breakout,
+            time_filter, sr
+        )
+        if not risk_gate["allowed"] and score not in range(46, 55):
+            signal, signal_class = "风控观望", "neutral"
+        trailing_stop = calc_trailing_stop(tp, market_price)
         win_rate = estimate_win_rate(score, adx_val, divergence["has_divergence"], fake_breakout["is_fake"], streak["up_streak"] if score >= 50 else streak["down_streak"])
-        kelly = calc_kelly_position(win_rate, tp["risk_reward"])
+        kelly = {"enabled": False, "kelly_pct": 0, "half_kelly_pct": 0,
+                 "position_size": 0, "note": "未使用：启发式信号质量不能作为凯利胜率"}
         
         # 趋势判断
         trend = pred.get("trend", "震荡")
@@ -1284,11 +1379,11 @@ def api_predict():
             adx_note = f"ADX={adx_val:.0f}强趋势，"
         
         if tp["direction"] == "long":
-            advice = f"{adx_note}可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，模型估算胜率{win_rate}%"
+            advice = f"{adx_note}可考虑做多{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，信号质量{win_rate}分"
         elif tp["direction"] == "short":
-            advice = f"{adx_note}可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，模型估算胜率{win_rate}%"
+            advice = f"{adx_note}可考虑做空{trend_note}，入场 ${tp['entry']:,.2f}，止损 ${tp['stop_loss']:,.2f}，TP1 ${tp['tp1']:,.2f}（3×ATR，平30%），TP2 ${tp['tp2']:,.2f}（4×ATR，平30%），TP3 ${tp['tp3']:,.2f}（5×ATR，平40%），建议持仓 {ht['min_text']}~{ht['max_text']}，信号质量{win_rate}分"
         else:
-            advice = f"信号不明确，趋势{trend}，ADX={adx_val:.0f}，建议观望等待，如入场建议持仓不超过 {ht['avg_text']}"
+            advice = tp.get("message") or f"信号不明确，趋势{trend}，ADX={adx_val:.0f}，建议观望"
         
         # 信号置信度计算
         direction = "long" if score >= 55 else ("short" if score <= 45 else "neutral")
@@ -1345,10 +1440,10 @@ def api_predict():
         
         if confidence_pct >= 80:
             confidence_level = "极高"
-            confidence_note = "所有指标高度一致，建议重仓"
+            confidence_note = "指标高度一致，但仍须通过风险门禁"
         elif confidence_pct >= 65:
             confidence_level = "高"
-            confidence_note = "大部分指标一致，可正常仓位"
+            confidence_note = "大部分指标一致，按风险预算控制仓位"
         elif confidence_pct >= 50:
             confidence_level = "中"
             confidence_note = "指标有分歧，建议轻仓"
@@ -1368,7 +1463,9 @@ def api_predict():
         return jsonify({
             "symbol": symbol,
             "timeframe": timeframe,
-            "current_price": float(latest["close"]),
+            "current_price": market_price,
+            "signal_candle_closed": True,
+            "signal_candle_timestamp": int(latest["timestamp"]),
             "confidence": confidence_data,
             "pct_change": float(latest["pct_change"]),
             "vol_ratio": float(latest["vol_ratio"]),
@@ -1385,12 +1482,13 @@ def api_predict():
             "support_resistance": sr,
             "holding_time": ht,
             "trade_plan": tp,
-            "multi_tf": analyze_multi_timeframe(symbol, timeframe),
+            "risk_gate": risk_gate,
+            "multi_tf": multi_tf_data,
             "funding_rate": get_funding_rate(symbol),
             "fib_levels": calc_fibonacci_and_levels(df),
             "volume_anomaly": detect_volume_anomaly(df),
             "divergence": divergence,
-            "multi_tf_confirm": check_multi_tf_confirmation(symbol, timeframe),
+            "multi_tf_confirm": multi_tf_confirmation,
             "fake_breakout": fake_breakout,
             "candlestick": patterns,
             "streak": streak,
@@ -1399,6 +1497,7 @@ def api_predict():
             "leverage": leverage,
             "trailing_stop": trailing_stop,
             "win_rate": win_rate,
+            "signal_quality": win_rate,
             "kelly": kelly,
             "advice": advice,
             "timestamp": datetime.now().isoformat(),
@@ -1424,6 +1523,10 @@ def api_scan():
             try:
                 df, error = fetch_klines(s["id"], timeframe, 200)
                 if error or df is None or len(df) < 100:
+                    continue
+                if "confirm" in df.columns:
+                    df = df[df["confirm"].astype(str) == "1"].copy()
+                if len(df) < 100:
                     continue
                 df = calc_indicators(df)
                 latest = df.iloc[-1]
@@ -1454,7 +1557,12 @@ def check_multi_tf_confirmation(symbol, timeframe):
         df_1h, err2 = fetch_klines(symbol, "1H", 100)
         
         if err1 or err2 or df_4h is None or df_1h is None:
-            return {"confirmed": True, "reason": "数据不足，跳过确认"}
+            return {"confirmed": False, "reason": "多周期数据不足，禁止生成交易计划"}
+
+        if "confirm" in df_4h.columns:
+            df_4h = df_4h[df_4h["confirm"].astype(str) == "1"].copy()
+        if "confirm" in df_1h.columns:
+            df_1h = df_1h[df_1h["confirm"].astype(str) == "1"].copy()
         
         df_4h = calc_indicators(df_4h)
         df_1h = calc_indicators(df_1h)
@@ -1471,7 +1579,7 @@ def check_multi_tf_confirmation(symbol, timeframe):
         else:
             return {"confirmed": False, "reason": f"4H({score_4h}分,{dir_4h})和1H({score_1h}分,{dir_1h})方向不一致，建议观望", "score_4h": score_4h, "score_1h": score_1h}
     except Exception as e:
-        return {"confirmed": True, "reason": f"确认失败: {str(e)}"}
+        return {"confirmed": False, "reason": f"多周期确认失败，禁止交易: {str(e)}"}
 
 
 @app.route("/api/backtest")
@@ -1506,61 +1614,99 @@ def api_backtest():
         max_balance = initial_balance
         max_drawdown = 0
         
-        for i in range(50, len(df) - 5):
+        fee_rate = 0.0005
+        slippage_rate = 0.0002
+
+        def realize_leg(pos, exit_price, fraction):
+            signed_return = ((exit_price - pos["entry"]) / pos["entry"])
+            if pos["side"] == "short":
+                signed_return *= -1
+            leg_notional = pos["notional"] * fraction
+            pos["realized"] += leg_notional * signed_return - leg_notional * fee_rate
+            pos["remaining"] = max(0, pos["remaining"] - fraction)
+
+        def finish_trade(pos, exit_price, reason):
+            nonlocal balance, max_balance, max_drawdown
+            balance += pos["realized"]
+            margin = pos["notional"] / pos["leverage"] if pos["leverage"] else pos["notional"]
+            pnl_pct = pos["realized"] / margin * 100 if margin else 0
+            trades.append({
+                "side": pos["side"], "entry": round(pos["entry"], 6),
+                "exit": round(exit_price, 6), "reason": reason,
+                "pnl_pct": round(pnl_pct, 2), "pnl": round(pos["realized"], 2),
+                "balance": round(balance, 2), "leverage": pos["leverage"],
+                "notional": round(pos["notional"], 2),
+            })
+            max_balance = max(max_balance, balance)
+            max_drawdown = max(max_drawdown, (max_balance - balance) / max_balance * 100 if max_balance else 0)
+
+        for i in range(50, len(df) - 1):
             row = df.iloc[i]
-            score, _ = calc_signal_score(df.iloc[:i+1])
-            
-            # 开仓逻辑
             if position is None:
-                if score >= 60:  # 做多
-                    entry = float(row["close"])
-                    atr = float(row["atr"])
-                    stop_loss = entry - atr * 1.0
-                    tp = entry + atr * 3.0
-                    position = {"side": "long", "entry": entry, "stop_loss": stop_loss, "tp": tp, "index": i}
-                elif score <= 40:  # 做空
-                    entry = float(row["close"])
-                    atr = float(row["atr"])
-                    stop_loss = entry + atr * 1.0
-                    tp = entry - atr * 3.0
-                    position = {"side": "short", "entry": entry, "stop_loss": stop_loss, "tp": tp, "index": i}
-            else:
-                # 检查止损止盈
-                current_price = float(row["close"])
-                high = float(row["high"])
-                low = float(row["low"])
-                
-                closed = False
-                pnl_pct = 0
-                
-                if position["side"] == "long":
-                    if low <= position["stop_loss"]:
-                        pnl_pct = (position["stop_loss"] - position["entry"]) / position["entry"]
-                        closed = True
-                    elif high >= position["tp"]:
-                        pnl_pct = (position["tp"] - position["entry"]) / position["entry"]
-                        closed = True
-                else:
-                    if high >= position["stop_loss"]:
-                        pnl_pct = (position["entry"] - position["stop_loss"]) / position["entry"]
-                        closed = True
-                    elif low <= position["tp"]:
-                        pnl_pct = (position["entry"] - position["tp"]) / position["entry"]
-                        closed = True
-                
-                if closed:
-                    # 用10%仓位
-                    trade_pnl = balance * 0.1 * pnl_pct * 10  # 10倍杠杆
-                    balance += trade_pnl
-                    exit_price = position["stop_loss"] if pnl_pct < 0 else position["tp"]
-                    trades.append({"side": position["side"], "entry": position["entry"], "exit": exit_price, "pnl_pct": round(pnl_pct*100, 2), "pnl": round(trade_pnl, 2), "balance": round(balance, 2)})
+                score, _ = calc_signal_score(df.iloc[:i + 1])
+                direction = "long" if score >= 60 else "short" if score <= 40 else None
+                if direction is None or float(row["adx"]) < 20:
+                    continue
+                next_row = df.iloc[i + 1]
+                raw_entry = float(next_row["open"])
+                entry = raw_entry * (1 + slippage_rate if direction == "long" else 1 - slippage_rate)
+                leverage_data = calc_dynamic_leverage(float(row["atr"]), entry, float(row["adx"]))
+                plan = calc_trade_plan(score, entry, float(row["atr"]), calc_support_resistance(df.iloc[:i + 1]),
+                                       symbol, leverage=leverage_data["recommended_leverage"], account_size=balance)
+                prediction = predict_price(df.iloc[:i + 1], periods=5)
+                expected = max([0] + ([p - entry for p in prediction["predicted"]] if direction == "long"
+                                      else [entry - p for p in prediction["predicted"]]))
+                if expected / entry * 100 < max(0.19, plan["stop_pct"] * 1.5):
+                    continue
+                position = {
+                    "side": direction, "entry": entry, "stop_loss": plan["stop_loss"],
+                    "targets": [plan["tp1"], plan["tp2"], plan["tp3"]],
+                    "fractions": [0.3, 0.3, 0.4], "next_target": 0,
+                    "remaining": 1.0, "notional": plan["notional_value"],
+                    "leverage": plan["leverage"], "opened_index": i + 1,
+                    "realized": -plan["notional_value"] * fee_rate,
+                }
+                continue
+
+            high, low, close = float(row["high"]), float(row["low"]), float(row["close"])
+            is_long = position["side"] == "long"
+            stop_hit = low <= position["stop_loss"] if is_long else high >= position["stop_loss"]
+            if stop_hit:
+                exit_price = position["stop_loss"] * (1 - slippage_rate if is_long else 1 + slippage_rate)
+                realize_leg(position, exit_price, position["remaining"])
+                finish_trade(position, exit_price, "止损")
+                position = None
+                continue
+
+            while position and position["next_target"] < 3:
+                target = position["targets"][position["next_target"]]
+                target_hit = high >= target if is_long else low <= target
+                if not target_hit:
+                    break
+                fraction = min(position["fractions"][position["next_target"]], position["remaining"])
+                exit_price = target * (1 - slippage_rate if is_long else 1 + slippage_rate)
+                realize_leg(position, exit_price, fraction)
+                position["next_target"] += 1
+                if position["next_target"] == 1:
+                    position["stop_loss"] = position["entry"]
+                if position["remaining"] <= 0.0001:
+                    finish_trade(position, exit_price, "TP3")
                     position = None
-                    
-                    if balance > max_balance:
-                        max_balance = balance
-                    drawdown = (max_balance - balance) / max_balance * 100
-                    if drawdown > max_drawdown:
-                        max_drawdown = drawdown
+                    break
+
+            if position and i - position["opened_index"] >= 5 and position["next_target"] == 0:
+                exit_price = close * (1 - slippage_rate if is_long else 1 + slippage_rate)
+                realize_leg(position, exit_price, position["remaining"])
+                finish_trade(position, exit_price, "时间止损")
+                position = None
+
+        if position is not None:
+            close = float(df.iloc[-1]["close"])
+            is_long = position["side"] == "long"
+            exit_price = close * (1 - slippage_rate if is_long else 1 + slippage_rate)
+            realize_leg(position, exit_price, position["remaining"])
+            finish_trade(position, exit_price, "期末平仓")
+            position = None
         
         wins = [t for t in trades if t["pnl"] > 0]
         losses = [t for t in trades if t["pnl"] <= 0]
@@ -1580,6 +1726,9 @@ def api_backtest():
             "actual_days": round(actual_days, 1),
             "bars_count": len(df),
             "history_truncated": requested_bars > 3000,
+            "fee_rate_pct": fee_rate * 100,
+            "slippage_rate_pct": slippage_rate * 100,
+            "strategy_note": "收盘信号、下一根开盘成交、ADX过滤、风险仓位、分批止盈、保本止损、5根K线时间止损；不含历史多周期过滤和资金费率",
             "initial_balance": initial_balance,
             "final_balance": round(balance, 2),
             "total_pnl": round(total_pnl, 2),

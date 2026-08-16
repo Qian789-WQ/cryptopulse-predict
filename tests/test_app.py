@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,40 @@ class CalculationTests(unittest.TestCase):
         self.assertEqual(plan["pyramid"]["entry3"]["pct"], 20)
         self.assertEqual(plan["time_stop"]["max_candles"], 5)
         self.assertEqual(plan["signal_strength"], "strong")
+        self.assertLessEqual(plan["margin_pct"], 25)
+        self.assertLessEqual(plan["leverage"], 5)
+        self.assertLessEqual(plan["risk_amount"], plan["risk_budget"])
+        self.assertGreater(plan["pyramid"]["entry2"]["price"], plan["entry"])
+        self.assertGreater(plan["pyramid"]["entry3"]["price"], plan["pyramid"]["entry2"]["price"])
+
+    def test_risk_gate_blocks_conflicting_timeframes(self):
+        plan = cryptopulse.calc_trade_plan(75, 100, 2, {}, "BTC-USDT-SWAP")
+        blocked, gate = cryptopulse.apply_trade_risk_gate(
+            plan,
+            {"predicted": [101, 102, 103, 104, 105]},
+            {"confirmed": False},
+            30,
+            {"is_fake": False},
+            {"level": "low"},
+            {},
+        )
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(blocked["direction"], "neutral")
+        self.assertEqual(blocked["notional_value"], 0)
+
+    def test_risk_gate_allows_aligned_economic_setup(self):
+        plan = cryptopulse.calc_trade_plan(75, 100, 2, {}, "BTC-USDT-SWAP")
+        allowed, gate = cryptopulse.apply_trade_risk_gate(
+            plan,
+            {"predicted": [101, 103, 105, 106, 107]},
+            {"confirmed": True},
+            30,
+            {"is_fake": False},
+            {"level": "low"},
+            {},
+        )
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(allowed["direction"], "long")
 
     def test_short_signal_win_rate_uses_conviction(self):
         self.assertEqual(
@@ -74,6 +109,8 @@ class RouteTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["bars_count"], 120)
         self.assertIn("actual_days", payload)
+        self.assertIn("下一根开盘成交", payload["strategy_note"])
+        self.assertGreater(payload["fee_rate_pct"], 0)
 
     @patch.object(cryptopulse, "get_funding_rate")
     @patch.object(cryptopulse, "fetch_klines")
@@ -94,6 +131,12 @@ class RouteTests(unittest.TestCase):
         plan = response.get_json()["trade_plan"]
         self.assertIn("pyramid", plan)
         self.assertEqual(plan["time_stop"]["max_holding_minutes"], 300)
+
+    def test_frontend_guards_websocket_symbol_switch(self):
+        html = Path("templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("instId===selectedSymbol", html)
+        self.assertIn("subscribedSymbol", html)
+        self.assertIn("requestId!==predictionRequestId", html)
 
 
 if __name__ == "__main__":
